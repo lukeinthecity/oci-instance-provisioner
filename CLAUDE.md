@@ -1,15 +1,79 @@
-SYSTEM CONTEXT:
-You are an expert DevOps engineer refactoring a local Windows PowerShell provisioning script into a clean, open-source repository configuration. The utility uses the native Oracle Cloud Infrastructure (OCI) CLI to automate shape deployments.
+# Project Context — OCI Instance Provisioner
 
-CURRENT WORKING BASE CODE:
-The logic core is currently configured inside an active Windows Scheduled Task running under 'NT AUTHORITY\SYSTEM' to survive hardware power drops. The execution loop catches non-success states, implements automated exception handling, and calculates a dynamic randomized jitter backoff (60s base + random pad) to manage data center resource exhaustion gracefully.
+> Context + working agreement for Claude Code on this repo. Kept tracked while the repo is
+> **private**; scrub or remove before going public (see "Before going public" below).
 
-REFACTORING TARGETS:
-1. DECOUPLE ENVIRONMENTAL VARIABLES: Extract all infrastructure parameters (CompartmentId, SubnetId, ImageId, AvailabilityDomain, SshKeyPath, and NtfyTopic) entirely out of the script logic core.
-2. SCHEMA DESIGN: Create a 'config.json.example' structural blueprint for public distribution.
-3. CONTEXT PARSING: Update the main script to look for a local 'config.json' file using '$PSScriptRoot'. Implement an explicit evaluation gate that terminates execution with a clean error message if the local JSON configuration file is absent.
-4. INTEGRATE NTFY WEBHOOKS: Implement a clean native 'Invoke-RestMethod' payload inside the true success condition that fires a push notification to an unauthenticated ntfy.sh topic string specified in the JSON config. Ensure the 'Uri' properly parses the string without dynamic variable collisions (avoid stray '$' prefix inside the string path).
-5. VALIDATION HARDENING: Ensure the loop breaks ONLY when the OCI CLI return stream contains a valid structural confirmation instance string ('ocid1.instance.oc1'). Any other return token or status error code must trigger the 'catch' block backoff window.
+## What this is
 
-TASK:
-Generate the production-ready code files matching these design rules. Keep the code heavily commented using standard enterprise documentation patterns to make it clear, readable, and portfolio-ready.
+A Windows PowerShell utility that repeatedly calls the native OCI CLI to launch an Oracle
+Cloud **Always Free** Ampere A1 (ARM) instance, retrying with a randomized jitter backoff
+until capacity is available, then fires an ntfy.sh push on success. It is designed to run
+unattended — interactively, or as a startup Scheduled Task (current user or SYSTEM).
+
+Current state: refactored from a single hardcoded script into a clean, configurable,
+**tested** repo. Secrets are fully decoupled into a git-ignored `config.json`.
+
+## Repo layout
+
+| Path | Role |
+|------|------|
+| `OciProvisioner.ps1` | Main loop: config gate → preflight → retry/launch → validate → notify |
+| `Register-ScheduledTask.ps1` | Installs the startup task (`-RunAsCurrentUser` or SYSTEM) |
+| `config.json.example` | Blueprint; copied to `config.json` (ignored by git) |
+| `tests/Run-IntegrationTests.ps1` | Hermetic end-to-end tests (mock `oci`, no network) |
+| `.gitignore` / `LICENSE` | Secrets+logs excluded / MIT, © Luke Shefski |
+
+## Design decisions & gotchas (do not regress these)
+
+These were established (and several were *bugs discovered and fixed*) during the hardening
+pass. Preserve them:
+
+1. **Native CLI is invoked with an argument ARRAY**, not hashtable splatting:
+   `& oci @LaunchArgs`. Hashtable splatting does not map to `--flags` for a native exe.
+2. **`$ErrorActionPreference='Stop'` + native stderr is a trap.** With the global `Stop`,
+   `& oci ... 2>&1` throws the moment the CLI writes *any* line to stderr — even on a
+   **successful** launch (the OCI CLI emits non-fatal notices). That made the original
+   script loop forever on an instance it had already created. The fix, which the tests
+   guard: capture inside a child scope that relaxes the preference and renders stderr as
+   plain text — `& { $ErrorActionPreference='Continue'; & oci @LaunchArgs 2>&1 | % { "$_" } } | Out-String`.
+   **Success is decided solely by `$LASTEXITCODE -eq 0` AND a literal `*ocid1.instance.oc1*` match** (use `-like`, not regex `-match`).
+3. **StrictMode-safe config access.** `Set-StrictMode -Version Latest` throws on `.Value`
+   of a missing property. Read optional keys via `Get-ConfigValue` and guard
+   `$Config.PSObject.Properties[$key]` before touching `.Value`.
+4. **Idempotency marker.** On success the script writes `provisioner.success` and exits
+   early if it already exists — so a Scheduled Task won't provision a *second* instance on
+   reboot. Don't remove this without also rethinking the startup-task story.
+5. **ntfy URI** is built as `"$NtfyServer/$($Config.NtfyTopic)"` — subexpression
+   interpolation, no stray `$`. `NtfyServer` defaults to `https://ntfy.sh` (override to
+   self-host). A failed push is logged as a warning and never masks a successful provision.
+6. **Fatal setup errors** use the `Exit-Fatal` helper (clean message + `exit 1`), not
+   `Write-Error` (which under `Stop` prints a noisy error blob).
+7. **SYSTEM context caveat.** As SYSTEM the OCI CLI can't see the user's `~/.oci/config`;
+   `OciCliConfigPath` sets `OCI_CLI_CONFIG_FILE`. Prefer `-RunAsCurrentUser`.
+
+## Conventions
+
+- Target **Windows PowerShell 5.1** (no PS7-only syntax) so it runs on a stock Windows box.
+- Heavy, enterprise-style comments — this is a portfolio repo; keep it readable.
+- **No secrets in tracked files.** Anything user-specific goes in `config.json`.
+- When you change provisioning behavior, **add/adjust a scenario in
+  `tests/Run-IntegrationTests.ps1`** and run it (`.\tests\Run-IntegrationTests.ps1`) before
+  committing. Keep tests hermetic (mock `oci`, never hit Oracle or the public network).
+
+## Look-ahead / future work
+
+Roughly highest-value first:
+
+- [ ] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
+- [ ] **Linting**: run `PSScriptAnalyzer` in CI and clean up findings.
+- [ ] **AD/region fallback**: rotate through multiple Availability Domains on capacity errors.
+- [ ] **Optional wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
+- [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
+- [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.
+- [ ] **Docs polish**: a short asciinema/screenshot of a successful run for the README.
+
+## Before going public
+
+- [ ] Decide whether to keep this `CLAUDE.md` (it documents intent) or remove/trim it.
+- [ ] Confirm no real OCIDs, key paths, or ntfy topics ever landed in tracked files or history.
+- [ ] Add a `CONTRIBUTING.md` if accepting PRs; tag an initial release.

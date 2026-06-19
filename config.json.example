@@ -1,0 +1,31 @@
+{
+  "_comment": "Copy this file to 'config.json' (same folder) and replace every value. config.json is git-ignored and never published. See README.md for how to obtain each OCID.",
+
+  "CompartmentId": "ocid1.tenancy.oc1..REPLACE_ME",
+  "SubnetId": "ocid1.subnet.oc1.REGION.REPLACE_ME",
+  "ImageId": "ocid1.image.oc1.REGION.REPLACE_ME",
+  "AvailabilityDomain": "REPLACE_ME-example:US-ASHBURN-AD-1",
+  "SshKeyPath": "C:\\Users\\REPLACE_ME\\.ssh\\id_ed25519.pub",
+  "NtfyTopic": "REPLACE_ME-pick-a-unique-string",
+
+  "_optional": "Everything below is optional. Defaults shown reflect the full Always Free ARM allocation (4 OCPU / 24 GB). Remove any line to accept its default.",
+
+  "Shape": "VM.Standard.A1.Flex",
+  "Ocpus": 4,
+  "MemoryInGBs": 24,
+  "DisplayName": "oci-free-arm-instance",
+  "AssignPublicIp": true,
+
+  "_ntfyServer": "Optional ntfy base URL. Defaults to https://ntfy.sh. Point this at your own server to self-host notifications.",
+  "NtfyServer": "https://ntfy.sh",
+
+  "BaseDelaySeconds": 60,
+  "JitterSeconds": 30,
+
+  "_ociCliConfigPath": "ONLY needed when running as a SYSTEM Scheduled Task: absolute path to the ~/.oci/config you created with 'oci setup config'. Leave blank for interactive/user runs. e.g. C:\\\\Users\\\\you\\\\.oci\\\\config",
+  "OciCliConfigPath": "",
+
+  "_logAndMarker": "Leave blank to use defaults next to the script (provisioner.log / provisioner.success).",
+  "LogPath": "",
+  "SuccessMarkerPath": ""
+}
