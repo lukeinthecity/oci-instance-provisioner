@@ -21,6 +21,7 @@ Current state: refactored from a single hardcoded script into a clean, configura
 | `Register-ScheduledTask.ps1` | Installs the startup task (`-RunAsCurrentUser` or SYSTEM) |
 | `config.json.example` | Blueprint; copied to `config.json` (ignored by git) |
 | `tests/Run-IntegrationTests.ps1` | Hermetic end-to-end tests (mock `oci`, no network) |
+| `docs/TEST-FLIGHT-NOTES.md` | Living lessons-learned runbook — **read this first** (see Conventions) |
 | `.gitignore` / `LICENSE` | Secrets+logs excluded / MIT, © Luke Shefski |
 
 ## Design decisions & gotchas (do not regress these)
@@ -50,6 +51,19 @@ pass. Preserve them:
    `Write-Error` (which under `Stop` prints a noisy error blob).
 7. **SYSTEM context caveat.** As SYSTEM the OCI CLI can't see the user's `~/.oci/config`;
    `OciCliConfigPath` sets `OCI_CLI_CONFIG_FILE`. Prefer `-RunAsCurrentUser`.
+8. **StrictMode + scalar `.Count`.** A single-element `Where-Object`/`-split` result is a
+   *scalar*, and `.Count` on a scalar throws under `Set-StrictMode -Version Latest`. Force
+   list-shaped values to arrays with `@(...)` — that's why `$AvailabilityDomains` is built as
+   `@(@($Config.AvailabilityDomain) | Where-Object {...})`.
+9. **Native-arg JSON quoting.** `--shape-config` is JSON; PowerShell strips the double quotes
+   when handing a string to a native exe, so they're escaped (`-replace '"','\"'`). The mock
+   `oci` in the tests validates this via python so it can't silently regress.
+10. **Permanent vs transient errors.** The loop only retries genuine capacity/throttle/5xx
+    errors; auth/not-found/quota/invalid-request abort fast via `Exit-Fatal` with the real CLI
+    message (so a misconfig can't masquerade as an endless "capacity" wait).
+11. **Multi-AD sweep, never parallel.** `AvailabilityDomain` may be a string or a list; the
+    loop tries each AD back-to-back per cycle and stops on the first success. Do NOT parallelize
+    — concurrent successes would provision multiple instances and exceed the free allocation.
 
 ## Conventions
 
@@ -59,6 +73,12 @@ pass. Preserve them:
 - When you change provisioning behavior, **add/adjust a scenario in
   `tests/Run-IntegrationTests.ps1`** and run it (`.\tests\Run-IntegrationTests.ps1`) before
   committing. Keep tests hermetic (mock `oci`, never hit Oracle or the public network).
+- **Maintain `docs/TEST-FLIGHT-NOTES.md` as a living lessons-learned runbook.** Read it at the
+  start of a session and update it the same day a new class of bug or ops gotcha is found — record
+  each as *symptom → root cause → fix → lesson*. It is written to be parsed by AI agents alongside
+  this file: correlating it to the code lets an assistant skip re-deriving solved problems and not
+  re-introduce them. Keep it secret-free (it ships public) and linked from the README. This is a
+  **per-project best practice**, not specific to this repo — start one for every project.
 
 ## Look-ahead / future work
 
@@ -66,7 +86,7 @@ Roughly highest-value first:
 
 - [ ] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
 - [ ] **Linting**: run `PSScriptAnalyzer` in CI and clean up findings.
-- [ ] **AD/region fallback**: rotate through multiple Availability Domains on capacity errors.
+- [x] **AD fallback**: `AvailabilityDomain` accepts a list; the loop sweeps all ADs each cycle, and `Region` can be pinned. (Cross-*region* rotation is still open.)
 - [ ] **Optional wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
 - [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.

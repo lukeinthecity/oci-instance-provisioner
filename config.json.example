@@ -4,9 +4,13 @@
   "CompartmentId": "ocid1.tenancy.oc1..REPLACE_ME",
   "SubnetId": "ocid1.subnet.oc1.REGION.REPLACE_ME",
   "ImageId": "ocid1.image.oc1.REGION.REPLACE_ME",
+  "_availabilityDomain": "Use the FULL name incl. the tenancy prefix (the part before the colon is assigned per-tenancy, NOT derivable). Get it with: oci iam availability-domain list --compartment-id <tenancy-ocid> --query \"data[].name\" --raw-output . YOUR CHOICE: a single string polls ONE AD; a JSON array sweeps SEVERAL each cycle, e.g. [\"abCD:US-ASHBURN-AD-1\", \"abCD:US-ASHBURN-AD-2\", \"abCD:US-ASHBURN-AD-3\"]",
   "AvailabilityDomain": "REPLACE_ME-example:US-ASHBURN-AD-1",
   "SshKeyPath": "C:\\Users\\REPLACE_ME\\.ssh\\id_ed25519.pub",
   "NtfyTopic": "REPLACE_ME-pick-a-unique-string",
+
+  "_region": "STRONGLY recommended. Must match the region of your Subnet/Image/AD (e.g. us-ashburn-1). If blank, the CLI uses the region from ~/.oci/config, which can silently mismatch and loop forever on a 404.",
+  "Region": "us-ashburn-1",
 
   "_optional": "Everything below is optional. Defaults shown reflect the full Always Free ARM allocation (4 OCPU / 24 GB). Remove any line to accept its default.",
 
