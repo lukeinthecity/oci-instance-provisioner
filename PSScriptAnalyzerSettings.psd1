@@ -1,4 +1,4 @@
-@{
+﻿@{
     # CI gates on Error + Warning. Information-level rules (e.g. trailing whitespace) are
     # surfaced by editors but don't block the build.
     Severity = @('Error', 'Warning')
