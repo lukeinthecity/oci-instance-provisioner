@@ -38,3 +38,27 @@ jobs:
       - name: Run hermetic integration suite
         shell: powershell
         run: .\tests\Run-IntegrationTests.ps1
+
+  lint:
+    name: PSScriptAnalyzer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install PSScriptAnalyzer
+        shell: powershell
+        run: Install-Module PSScriptAnalyzer -Scope CurrentUser -Force -SkipPublisherCheck -ErrorAction Stop
+
+      # Analyze every script against PSScriptAnalyzerSettings.psd1; fail on any finding and
+      # print the full table so the offending rule/file/line is visible in the run log.
+      - name: Run PSScriptAnalyzer
+        shell: powershell
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+          if ($results) {
+            $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize | Out-String -Width 4096 | Write-Host
+            Write-Host "PSScriptAnalyzer found $($results.Count) issue(s)."
+            exit 1
+          }
+          Write-Host "PSScriptAnalyzer: clean (0 issues)."

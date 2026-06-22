@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
     Autonomous Oracle Cloud Infrastructure (OCI) "Always Free" compute provisioner.
@@ -91,7 +91,7 @@ function Write-Log {
 
     # File (durable: this is what you read back after a headless scheduled run).
     if ($Path) {
-        try { Add-Content -LiteralPath $Path -Value $line -Encoding UTF8 } catch { }
+        try { Add-Content -LiteralPath $Path -Value $line -Encoding UTF8 } catch { $null = $_ } # best-effort; a log-write failure must never break provisioning
     }
 }
 
