@@ -68,7 +68,7 @@ notepad .\config.json
 | `CompartmentId`      | ✅       | OCID of the compartment to launch into (often your root tenancy OCID).      | Console → Identity → Compartments, or `oci iam compartment list` |
 | `SubnetId`           | ✅       | OCID of the subnet for the instance's VNIC.                                 | Console → Networking → VCN → Subnets |
 | `ImageId`            | ✅       | OCID of the OS image (e.g. an aarch64 Ubuntu/Oracle Linux build).           | `oci compute image list --compartment-id <id> --shape VM.Standard.A1.Flex` |
-| `AvailabilityDomain` | ✅       | **Full** AD name, including the tenancy prefix (e.g. `Uocm:US-ASHBURN-AD-1`) — the bare `US-ASHBURN-AD-1` is rejected. | `oci iam availability-domain list --compartment-id <id> --query "data[].name" --raw-output` |
+| `AvailabilityDomain` | ✅       | **Full** AD name(s) incl. the tenancy prefix (e.g. `Uocm:US-ASHBURN-AD-1`) — bare `US-ASHBURN-AD-1` is rejected. A **single string** polls one AD; a **JSON array** sweeps several each cycle (see below). | `oci iam availability-domain list --compartment-id <id> --query "data[].name" --raw-output` |
 | `SshKeyPath`         | ✅       | Local path to your **public** key (`.pub`).                                 | e.g. `C:\Users\you\.ssh\id_ed25519.pub` |
 | `NtfyTopic`          | ✅       | A unique ntfy.sh topic string. Subscribe to it in the ntfy app first.       | You pick it — make it long/random so it stays private |
 | `Region`             | ⬜†      | Target region (e.g. `us-ashburn-1`). Must match your Subnet/Image/AD. If blank, the CLI's `~/.oci/config` region is used. | `oci iam region-subscription list` |
@@ -86,6 +86,24 @@ notepad .\config.json
 > † `Region` is technically optional but **strongly recommended** — leaving it blank relies on your `~/.oci/config` default, and a region mismatch fails on every attempt.
 
 > `config.json`, `provisioner.log`, `provisioner.success`, and key files are all in `.gitignore` — they will never be committed.
+
+### Polling one vs. multiple Availability Domains
+
+Capacity frees up in different ADs at different moments, so your odds improve if you watch more
+than one. It's your choice, set entirely by how you write `AvailabilityDomain`:
+
+```jsonc
+// One AD (default):
+"AvailabilityDomain": "Uocm:US-ASHBURN-AD-1"
+
+// Several — swept back-to-back each cycle, first one with capacity wins:
+"AvailabilityDomain": ["Uocm:US-ASHBURN-AD-1", "Uocm:US-ASHBURN-AD-2", "Uocm:US-ASHBURN-AD-3"]
+```
+
+With a list, each retry cycle tries every AD in turn **with no delay between them**, stops the
+instant one yields an instance, and only then backs off before the next sweep. They're tried
+sequentially (never in parallel) on purpose — two simultaneous successes would provision two
+instances and exceed the Always Free allocation.
 
 ## Usage
 

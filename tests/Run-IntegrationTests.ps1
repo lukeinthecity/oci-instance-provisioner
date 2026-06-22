@@ -95,6 +95,21 @@ echo ServiceError: NotAuthorizedOrNotFound. Authorization failed or requested re
 exit /b 1
 '@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
 }
+function New-AdSelectiveOci([string]$Dir) {
+    # Capacity ONLY in AD-3: fails "Out of host capacity" for AD-1/AD-2, succeeds for AD-3.
+    # Records each invocation's args so the test can confirm all three ADs were swept.
+    @'
+@echo off
+echo %*>> "%~dp0oci_args.txt"
+echo %*| findstr /C:"AD-3" >nul
+if errorlevel 1 (
+  echo ServiceError: Out of host capacity. 1>&2
+  exit /b 1
+)
+echo {"data": {"id": "ocid1.instance.oc1.iad.aaaaexamplefake"}}
+exit /b 0
+'@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
+}
 function New-Key([string]$Dir) {
     Set-Content -Path (Join-Path $Dir 'key.pub') -Value 'ssh-ed25519 AAAAtest test@host' -Encoding ASCII
 }
@@ -230,6 +245,30 @@ try {
     $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
     Assert ($r.ExitCode -eq 0)                                   "exits 0"
     Assert ($ociArgs -match '--region us-ashburn-1')             "passed --region to the CLI"
+
+    # --- Scenario 9: multi-AD sweep => lands on whichever AD has capacity, in one cycle ---
+    Write-Host "`n[9] Multi-AD sweep (capacity only in AD-3)"
+    $d = New-TestDir '9-multi-ad'
+    New-AdSelectiveOci $d; New-Key $d
+    ([ordered]@{
+        CompartmentId      = 'ocid1.tenancy.oc1.aaaareal'
+        SubnetId           = 'ocid1.subnet.oc1.iad.aaaareal'
+        ImageId            = 'ocid1.image.oc1.iad.aaaareal'
+        AvailabilityDomain = @('abCD:US-ASHBURN-AD-1', 'abCD:US-ASHBURN-AD-2', 'abCD:US-ASHBURN-AD-3')
+        SshKeyPath         = (Join-Path $d 'key.pub')
+        NtfyTopic          = 'hermetic-test-topic'
+        NtfyServer         = 'http://127.0.0.1:1'
+        Region             = 'us-ashburn-1'
+        BaseDelaySeconds   = 1
+        JitterSeconds      = 0
+    } | ConvertTo-Json) | Set-Content -Path (Join-Path $d 'config.json') -Encoding UTF8
+    $r = Invoke-Provisioner $d
+    $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
+    Assert ($r.ExitCode -eq 0)                       "exits 0 (found capacity during the sweep)"
+    Assert ($r.Out -match 'Instance secured')        "secured an instance"
+    Assert ($ociArgs -match 'AD-1')                  "tried AD-1"
+    Assert ($ociArgs -match 'AD-2')                  "tried AD-2 (no delay after AD-1's miss)"
+    Assert ($ociArgs -match 'AD-3')                  "tried AD-3 (where capacity was) in the same sweep"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

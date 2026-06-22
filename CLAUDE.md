@@ -50,6 +50,19 @@ pass. Preserve them:
    `Write-Error` (which under `Stop` prints a noisy error blob).
 7. **SYSTEM context caveat.** As SYSTEM the OCI CLI can't see the user's `~/.oci/config`;
    `OciCliConfigPath` sets `OCI_CLI_CONFIG_FILE`. Prefer `-RunAsCurrentUser`.
+8. **StrictMode + scalar `.Count`.** A single-element `Where-Object`/`-split` result is a
+   *scalar*, and `.Count` on a scalar throws under `Set-StrictMode -Version Latest`. Force
+   list-shaped values to arrays with `@(...)` — that's why `$AvailabilityDomains` is built as
+   `@(@($Config.AvailabilityDomain) | Where-Object {...})`.
+9. **Native-arg JSON quoting.** `--shape-config` is JSON; PowerShell strips the double quotes
+   when handing a string to a native exe, so they're escaped (`-replace '"','\"'`). The mock
+   `oci` in the tests validates this via python so it can't silently regress.
+10. **Permanent vs transient errors.** The loop only retries genuine capacity/throttle/5xx
+    errors; auth/not-found/quota/invalid-request abort fast via `Exit-Fatal` with the real CLI
+    message (so a misconfig can't masquerade as an endless "capacity" wait).
+11. **Multi-AD sweep, never parallel.** `AvailabilityDomain` may be a string or a list; the
+    loop tries each AD back-to-back per cycle and stops on the first success. Do NOT parallelize
+    — concurrent successes would provision multiple instances and exceed the free allocation.
 
 ## Conventions
 
@@ -66,7 +79,7 @@ Roughly highest-value first:
 
 - [ ] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
 - [ ] **Linting**: run `PSScriptAnalyzer` in CI and clean up findings.
-- [ ] **AD/region fallback**: rotate through multiple Availability Domains on capacity errors.
+- [x] **AD fallback**: `AvailabilityDomain` accepts a list; the loop sweeps all ADs each cycle, and `Region` can be pinned. (Cross-*region* rotation is still open.)
 - [ ] **Optional wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
 - [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.

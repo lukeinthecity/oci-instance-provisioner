@@ -177,6 +177,13 @@ $JitterRange    = [int](Get-ConfigValue -Name 'JitterSeconds'    -Default 30)
 # in ~/.oci/config, which can silently mismatch and 404 forever (see preflight below).
 $Region         = Get-ConfigValue -Name 'Region' -Default ''
 
+# Availability Domain(s). Accept EITHER a single string or a JSON array. We sweep through
+# all of them back-to-back each cycle (no delay between ADs) so capacity in ANY of them is
+# caught, then back off once per full sweep. The OUTER @(...) is essential: Where-Object
+# returns a scalar for a single match, and '.Count' on a scalar string throws under
+# Set-StrictMode -Version Latest — so we force the result to always be an array.
+$AvailabilityDomains = @(@($Config.AvailabilityDomain) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+
 # ntfy endpoint. Defaults to the public service; override to point at a self-hosted
 # instance. Trailing slash trimmed so the URI is built cleanly below.
 $NtfyServer     = (Get-ConfigValue -Name 'NtfyServer' -Default 'https://ntfy.sh').TrimEnd('/')
@@ -234,25 +241,28 @@ if (-not (Test-Path -LiteralPath $Config.SshKeyPath -PathType Leaf)) {
     Exit-Fatal "SSH public key not found at '$($Config.SshKeyPath)' (config.SshKeyPath). Point this at your .pub key."
 }
 
-# Availability Domain must carry its tenancy-specific prefix (e.g. 'Uocm:US-ASHBURN-AD-1').
-# A bare 'US-ASHBURN-AD-1' is never valid: the API rejects it (404) on EVERY attempt, which
-# the backoff loop would otherwise mistake for transient capacity and retry forever.
-if ($Config.AvailabilityDomain -notmatch ':') {
-    Exit-Fatal @"
-AvailabilityDomain '$($Config.AvailabilityDomain)' is missing its tenancy prefix.
+# Every Availability Domain must carry its tenancy-specific prefix (e.g. 'Uocm:US-ASHBURN-AD-1').
+# A bare 'US-ASHBURN-AD-1' is never valid: the API rejects it (404) on EVERY attempt, which the
+# backoff loop would otherwise mistake for transient capacity and retry forever. Check each one
+# (works whether AvailabilityDomain is a single string or a list).
+foreach ($ad in $AvailabilityDomains) {
+    if ($ad -notmatch ':') {
+        Exit-Fatal @"
+AvailabilityDomain '$ad' is missing its tenancy prefix.
 Real OCI AD names look like 'Uocm:US-ASHBURN-AD-1' (the prefix is assigned per-tenancy and
-is NOT derivable). Get the exact value with:
+is NOT derivable). Get the exact value(s) with:
   oci iam availability-domain list --compartment-id $($Config.CompartmentId) --query "data[].name" --raw-output
-then paste it verbatim into config.json (AvailabilityDomain).
+then paste them verbatim into config.json (AvailabilityDomain).
 "@
+    }
 }
 
 # Region-alignment sanity check. Subnet/image OCIDs are region-pinned (the region token sits
 # at index 3, e.g. 'iad' in ocid1.subnet.oc1.iad.xxxx). The region the CLI actually talks to
 # comes from ~/.oci/config unless we pass --region, and a mismatch 404s forever. Warn loudly
 # on any disagreement so it's obvious at startup rather than hidden as "capacity".
-$subnetParts = $Config.SubnetId -split '\.'
-$imageParts  = $Config.ImageId  -split '\.'
+$subnetParts = @($Config.SubnetId -split '\.')
+$imageParts  = @($Config.ImageId  -split '\.')
 $subnetRegionToken = if ($subnetParts.Count -gt 3) { $subnetParts[3] } else { '' }
 $imageRegionToken  = if ($imageParts.Count  -gt 3) { $imageParts[3]  } else { '' }
 if ($subnetRegionToken -and $imageRegionToken -and $subnetRegionToken -ne $imageRegionToken) {
@@ -267,119 +277,123 @@ if (-not $Region) {
 # ==============================================================================
 Write-Log -Path $LogPath -Level INFO -Message '================================================================'
 Write-Log -Path $LogPath -Level INFO -Message 'OCI Always Free provisioning engine started.'
-Write-Log -Path $LogPath -Level INFO -Message ("Shape: {0} ({1} OCPU / {2} GB) | AD: {3}" -f $Shape, $Ocpus, $MemoryInGBs, $Config.AvailabilityDomain)
+Write-Log -Path $LogPath -Level INFO -Message ("Shape: {0} ({1} OCPU / {2} GB) | AD(s): {3}" -f $Shape, $Ocpus, $MemoryInGBs, ($AvailabilityDomains -join ', '))
 Write-Log -Path $LogPath -Level INFO -Message ("Backoff: {0}s base + 0-{1}s jitter | Log: {2}" -f $BaseDelay, $JitterRange, $LogPath)
 Write-Log -Path $LogPath -Level INFO -Message '================================================================'
 
-$Attempt = 0
-while ($true) {
+$Attempt  = 0
+$launched = $false
+while (-not $launched) {
     $Attempt++
-    # Initialize so the catch block can safely inspect it even if the CLI call itself
-    # raises a PowerShell-terminating error before assignment (StrictMode safety).
-    $Response = $null
-    Write-Log -Path $LogPath -Level INFO -Message "Attempt #$Attempt - requesting instance launch..."
 
-    try {
-        # Build the CLI invocation as an ARGUMENT ARRAY. This is critical: 'oci' is a
-        # native executable, not a PowerShell cmdlet, so hashtable splatting would NOT
-        # map to --flags. Splatting an array (@LaunchArgs) passes each element as a
-        # discrete, correctly-quoted argument.
-        $LaunchArgs = @('compute', 'instance', 'launch')
-        # Pin the region when configured so it can't silently diverge from the CLI default.
-        if ($Region) { $LaunchArgs += @('--region', $Region) }
-        $LaunchArgs += @(
-            '--compartment-id',        $Config.CompartmentId,
-            '--availability-domain',   $Config.AvailabilityDomain,
-            '--subnet-id',             $Config.SubnetId,
-            '--image-id',              $Config.ImageId,
-            '--shape',                 $Shape,
-            '--shape-config',          $ShapeConfigJson,
-            '--display-name',          $DisplayName,
-            '--assign-public-ip',      ($AssignPublicIp.ToString().ToLower()),
-            '--ssh-authorized-keys-file', $Config.SshKeyPath
-        )
+    # ---- ONE SWEEP: try every Availability Domain back-to-back (no delay between them) ----
+    # Capacity appears in different ADs at different moments, so we poll them all each cycle and
+    # stop the instant one yields an instance. We deliberately do NOT fire them in parallel:
+    # two simultaneous successes would provision two instances and blow the Always Free
+    # 4 OCPU / 24 GB cap. (With a single AD configured, this is just a one-element sweep.)
+    foreach ($ad in $AvailabilityDomains) {
+        # Initialize so the catch block can safely inspect it even if the CLI call itself
+        # raises a PowerShell-terminating error before assignment (StrictMode safety).
+        $Response = $null
+        $adLabel  = if ($AvailabilityDomains.Count -gt 1) { " [$ad]" } else { '' }
+        Write-Log -Path $LogPath -Level INFO -Message "Attempt #$Attempt$adLabel - requesting instance launch..."
 
-        # Capture stdout + stderr together for the log. Two subtle-but-critical details:
-        #  1. We relax $ErrorActionPreference to 'Continue' inside this child scope. With
-        #     the global 'Stop', a native command writing ANY line to stderr (the OCI CLI
-        #     routinely emits non-fatal notices even on a SUCCESSFUL launch) is promoted to
-        #     a terminating error — which would throw before our success gate runs and loop
-        #     forever despite the instance being created.
-        #  2. Piping through { "$_" } renders merged stderr ErrorRecords as their plain
-        #     message text, stripping PowerShell's noisy NativeCommandError wrapper.
-        # Success is then decided solely by the real exit code + OCID gate below.
-        $Response = & {
-            $ErrorActionPreference = 'Continue'
-            & oci @LaunchArgs 2>&1 | ForEach-Object { "$_" }
-        } | Out-String
-
-        # STRICT VALIDATION (Refactoring Target #5): the loop may break ONLY when the
-        # response contains a genuine instance OCID. We use -like with a literal
-        # substring (not -match) so regex metacharacters in 'ocid1.instance.oc1' are
-        # treated literally. A non-zero exit code OR a missing OCID is treated as a
-        # transient failure and routed to the catch/backoff block.
-        if ($LASTEXITCODE -ne 0 -or $Response -notlike '*ocid1.instance.oc1*') {
-            throw "Launch did not return a confirmed instance OCID (exit code $LASTEXITCODE)."
-        }
-
-        # ---- SUCCESS PATH ----
-        Write-Log -Path $LogPath -Level SUCCESS -Message '================================================================'
-        Write-Log -Path $LogPath -Level SUCCESS -Message "Instance secured on attempt #$Attempt!"
-        Write-Log -Path $LogPath -Level SUCCESS -Message '================================================================'
-        Write-Log -Path $LogPath -Level INFO    -Message $Response.Trim()
-
-        # Write the idempotency marker so a Scheduled Task won't re-provision on reboot.
         try {
-            Set-Content -LiteralPath $SuccessMarkerPath -Encoding UTF8 -Value @"
+            # Build the CLI invocation as an ARGUMENT ARRAY. 'oci' is a native executable, not a
+            # PowerShell cmdlet, so hashtable splatting would NOT map to --flags; splatting an
+            # array passes each element as a discrete, correctly-quoted argument.
+            $LaunchArgs = @('compute', 'instance', 'launch')
+            # Pin the region when configured so it can't silently diverge from the CLI default.
+            if ($Region) { $LaunchArgs += @('--region', $Region) }
+            $LaunchArgs += @(
+                '--compartment-id',        $Config.CompartmentId,
+                '--availability-domain',   $ad,
+                '--subnet-id',             $Config.SubnetId,
+                '--image-id',              $Config.ImageId,
+                '--shape',                 $Shape,
+                '--shape-config',          $ShapeConfigJson,
+                '--display-name',          $DisplayName,
+                '--assign-public-ip',      ($AssignPublicIp.ToString().ToLower()),
+                '--ssh-authorized-keys-file', $Config.SshKeyPath
+            )
+
+            # Capture stdout + stderr together for the log. Two subtle-but-critical details:
+            #  1. We relax $ErrorActionPreference to 'Continue' inside this child scope. With the
+            #     global 'Stop', a native command writing ANY line to stderr (the OCI CLI emits
+            #     non-fatal notices even on a SUCCESSFUL launch) is promoted to a terminating
+            #     error — which would throw before our success gate runs and loop forever
+            #     despite the instance being created.
+            #  2. Piping through { "$_" } renders merged stderr ErrorRecords as plain message
+            #     text, stripping PowerShell's noisy NativeCommandError wrapper.
+            # Success is then decided solely by the real exit code + OCID gate below.
+            $Response = & {
+                $ErrorActionPreference = 'Continue'
+                & oci @LaunchArgs 2>&1 | ForEach-Object { "$_" }
+            } | Out-String
+
+            # STRICT VALIDATION (Refactoring Target #5): succeed ONLY when the response contains
+            # a genuine instance OCID. -like with a literal substring (not regex -match) treats
+            # the dots in 'ocid1.instance.oc1' literally. A non-zero exit code OR a missing OCID
+            # is a failure and routes to the catch block below.
+            if ($LASTEXITCODE -ne 0 -or $Response -notlike '*ocid1.instance.oc1*') {
+                throw "Launch did not return a confirmed instance OCID (exit code $LASTEXITCODE)."
+            }
+
+            # ---- SUCCESS PATH ----
+            Write-Log -Path $LogPath -Level SUCCESS -Message '================================================================'
+            Write-Log -Path $LogPath -Level SUCCESS -Message "Instance secured on attempt #$Attempt$adLabel!"
+            Write-Log -Path $LogPath -Level SUCCESS -Message '================================================================'
+            Write-Log -Path $LogPath -Level INFO    -Message $Response.Trim()
+
+            # Write the idempotency marker so a Scheduled Task won't re-provision on reboot.
+            try {
+                Set-Content -LiteralPath $SuccessMarkerPath -Encoding UTF8 -Value @"
 Provisioned at $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
 $($Response.Trim())
 "@
-        }
-        catch {
-            Write-Log -Path $LogPath -Level WARN -Message "Could not write success marker '$SuccessMarkerPath': $($_.Exception.Message)"
-        }
-
-        # 🔔 NTFY PUSH NOTIFICATION (Refactoring Target #4)
-        # Build the URI by interpolating the topic via a subexpression $(...). This
-        # avoids the classic "stray $" string-collision bug and parses cleanly.
-        try {
-            $NotificationParams = @{
-                Uri     = "$NtfyServer/$($Config.NtfyTopic)"
-                Method  = 'Post'
-                Body    = "Oracle Cloud ARM instance '$DisplayName' was successfully provisioned. Check your OCI console."
-                Headers = @{
-                    'Title'    = 'OCI Instance Secured'
-                    'Priority' = 'high'
-                    'Tags'     = 'tada,cloud'
-                }
             }
-            Invoke-RestMethod @NotificationParams | Out-Null
-            Write-Log -Path $LogPath -Level INFO -Message "Push notification sent to ntfy topic '$($Config.NtfyTopic)'."
+            catch {
+                Write-Log -Path $LogPath -Level WARN -Message "Could not write success marker '$SuccessMarkerPath': $($_.Exception.Message)"
+            }
+
+            # 🔔 NTFY PUSH NOTIFICATION (Refactoring Target #4)
+            # Build the URI by interpolating the topic via a subexpression $(...) — no stray $.
+            try {
+                $NotificationParams = @{
+                    Uri     = "$NtfyServer/$($Config.NtfyTopic)"
+                    Method  = 'Post'
+                    Body    = "Oracle Cloud ARM instance '$DisplayName' was successfully provisioned. Check your OCI console."
+                    Headers = @{
+                        'Title'    = 'OCI Instance Secured'
+                        'Priority' = 'high'
+                        'Tags'     = 'tada,cloud'
+                    }
+                }
+                Invoke-RestMethod @NotificationParams | Out-Null
+                Write-Log -Path $LogPath -Level INFO -Message "Push notification sent to ntfy topic '$($Config.NtfyTopic)'."
+            }
+            catch {
+                # A failed notification must not mask a successful provision.
+                Write-Log -Path $LogPath -Level WARN -Message "Instance provisioned, but ntfy notification failed: $($_.Exception.Message)"
+            }
+
+            $launched = $true
+            break   # stop sweeping ADs — we secured one
         }
         catch {
-            # A failed notification must not mask a successful provision.
-            Write-Log -Path $LogPath -Level WARN -Message "Instance provisioned, but ntfy notification failed: $($_.Exception.Message)"
-        }
+            # ---- PER-AD FAILURE HANDLING ----
+            # Permanent errors (auth, not-found, bad AD, quota, invalid request) never clear by
+            # waiting, so abort immediately with the REAL message instead of looping — the
+            # expensive, undiagnosable failure mode on a remote, always-on PC.
+            $rawResponse = if ($Response) { ($Response.Trim() -replace '\s+', ' ') } else { '' }
 
-        break
-    }
-    catch {
-        # ---- FAILURE PATH ----
-        # Distinguish failures that will NEVER clear by waiting (auth, not-found, bad AD,
-        # quota, invalid request) from genuinely transient ones (capacity, throttling, 5xx).
-        # On a remote, always-on PC, retrying a permanent error forever — mislabeled as
-        # "capacity" — is exactly the expensive, undiagnosable failure mode we must avoid.
-        $rawResponse = if ($Response) { ($Response.Trim() -replace '\s+', ' ') } else { '' }
+            $permanentSignatures = 'NotAuthorizedOrNotFound|NotAuthenticated|NotAuthorized|is not authorized|LimitExceeded|QuotaExceeded|service limit|CannotParseRequest|InvalidParameter|MissingParameter|does not exist'
+            $transientSignatures = 'Out of host capacity|OutOfCapacity|OutOfHostCapacity|TooManyRequests|throttl|Service.*Unavailable|InternalServerError|timed out|timeout'
 
-        $permanentSignatures = 'NotAuthorizedOrNotFound|NotAuthenticated|NotAuthorized|is not authorized|LimitExceeded|QuotaExceeded|service limit|CannotParseRequest|InvalidParameter|MissingParameter|does not exist'
-        $transientSignatures = 'Out of host capacity|OutOfCapacity|OutOfHostCapacity|TooManyRequests|throttl|Service.*Unavailable|InternalServerError|timed out|timeout'
-
-        # A clearly-permanent error (and not also transient) stops the loop immediately,
-        # surfacing the REAL CLI message instead of pretending it was a capacity wait.
-        if ($rawResponse -match $permanentSignatures -and $rawResponse -notmatch $transientSignatures) {
-            Write-Log -Path $LogPath -Level ERROR -Message 'Non-retryable error from the OCI CLI - this will NOT resolve by waiting:'
-            Write-Log -Path $LogPath -Level ERROR -Message $rawResponse
-            Exit-Fatal @"
+            if ($rawResponse -match $permanentSignatures -and $rawResponse -notmatch $transientSignatures) {
+                Write-Log -Path $LogPath -Level ERROR -Message 'Non-retryable error from the OCI CLI - this will NOT resolve by waiting:'
+                Write-Log -Path $LogPath -Level ERROR -Message $rawResponse
+                Exit-Fatal @"
 Provisioning aborted: OCI returned a permanent error (auth / not-found / quota / invalid request).
 Retrying will not help — fix the underlying configuration and re-run. Common causes:
   - AvailabilityDomain, Region, or the OCIDs point at the wrong tenancy/region.
@@ -389,22 +403,28 @@ Retrying will not help — fix the underlying configuration and re-run. Common c
 Raw CLI output:
 $rawResponse
 "@
-        }
+            }
 
-        # Transient (or unrecognized): back off and retry. Randomized jitter spreads retries
-        # out instead of hammering the capacity API in lock-step.
+            # Transient (or unrecognized): log it and move straight on to the NEXT AD in this
+            # sweep (no delay). The back-off happens once, after every AD has been tried.
+            if ($rawResponse -match $transientSignatures) {
+                Write-Log -Path $LogPath -Level WARN -Message "Capacity/transient error$adLabel - will retry: $($_.Exception.Message)"
+            } else {
+                # Never silently mislabel an unexpected failure as capacity — surface it loudly.
+                Write-Log -Path $LogPath -Level WARN -Message "Launch failed$adLabel (unclassified - see raw output): $($_.Exception.Message)"
+            }
+            if ($rawResponse) { Write-Log -Path $LogPath -Level INFO -Message "Raw CLI output: $rawResponse" }
+        }
+    }
+
+    # ---- END OF SWEEP ----
+    # If no AD yielded an instance, back off once before the next full sweep. Randomized jitter
+    # spreads retries out instead of hammering the capacity API in lock-step.
+    if (-not $launched) {
         $RandomJitter = Get-Random -Minimum 0 -Maximum ($JitterRange + 1)
         $TotalSleep   = $BaseDelay + $RandomJitter
-
-        if ($rawResponse -match $transientSignatures) {
-            Write-Log -Path $LogPath -Level WARN -Message "Capacity/transient error - will retry: $($_.Exception.Message)"
-        } else {
-            # Never silently mislabel an unexpected failure as capacity — surface it loudly.
-            Write-Log -Path $LogPath -Level WARN -Message "Launch failed (unclassified - see raw output): $($_.Exception.Message)"
-        }
-        if ($rawResponse) { Write-Log -Path $LogPath -Level INFO -Message "Raw CLI output: $rawResponse" }
-        Write-Log -Path $LogPath -Level INFO -Message "Backing off ${TotalSleep}s (base ${BaseDelay}s + jitter ${RandomJitter}s)..."
-
+        $sweptNote    = if ($AvailabilityDomains.Count -gt 1) { "Swept all $($AvailabilityDomains.Count) ADs; " } else { '' }
+        Write-Log -Path $LogPath -Level INFO -Message "${sweptNote}Backing off ${TotalSleep}s (base ${BaseDelay}s + jitter ${RandomJitter}s)..."
         Start-Sleep -Seconds $TotalSleep
     }
 }

@@ -4,7 +4,7 @@
   "CompartmentId": "ocid1.tenancy.oc1..REPLACE_ME",
   "SubnetId": "ocid1.subnet.oc1.REGION.REPLACE_ME",
   "ImageId": "ocid1.image.oc1.REGION.REPLACE_ME",
-  "_availabilityDomain": "Must be the FULL name incl. the tenancy prefix (the part before the colon is assigned per-tenancy, NOT derivable). Get it with: oci iam availability-domain list --compartment-id <tenancy-ocid> --query \"data[].name\" --raw-output",
+  "_availabilityDomain": "Use the FULL name incl. the tenancy prefix (the part before the colon is assigned per-tenancy, NOT derivable). Get it with: oci iam availability-domain list --compartment-id <tenancy-ocid> --query \"data[].name\" --raw-output . YOUR CHOICE: a single string polls ONE AD; a JSON array sweeps SEVERAL each cycle, e.g. [\"abCD:US-ASHBURN-AD-1\", \"abCD:US-ASHBURN-AD-2\", \"abCD:US-ASHBURN-AD-3\"]",
   "AvailabilityDomain": "REPLACE_ME-example:US-ASHBURN-AD-1",
   "SshKeyPath": "C:\\Users\\REPLACE_ME\\.ssh\\id_ed25519.pub",
   "NtfyTopic": "REPLACE_ME-pick-a-unique-string",
