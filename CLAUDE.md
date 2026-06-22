@@ -21,6 +21,7 @@ Current state: refactored from a single hardcoded script into a clean, configura
 | `Register-ScheduledTask.ps1` | Installs the startup task (`-RunAsCurrentUser` or SYSTEM) |
 | `config.json.example` | Blueprint; copied to `config.json` (ignored by git) |
 | `tests/Run-IntegrationTests.ps1` | Hermetic end-to-end tests (mock `oci`, no network) |
+| `docs/TEST-FLIGHT-NOTES.md` | Living lessons-learned runbook — **read this first** (see Conventions) |
 | `.gitignore` / `LICENSE` | Secrets+logs excluded / MIT, © Luke Shefski |
 
 ## Design decisions & gotchas (do not regress these)
@@ -72,6 +73,12 @@ pass. Preserve them:
 - When you change provisioning behavior, **add/adjust a scenario in
   `tests/Run-IntegrationTests.ps1`** and run it (`.\tests\Run-IntegrationTests.ps1`) before
   committing. Keep tests hermetic (mock `oci`, never hit Oracle or the public network).
+- **Maintain `docs/TEST-FLIGHT-NOTES.md` as a living lessons-learned runbook.** Read it at the
+  start of a session and update it the same day a new class of bug or ops gotcha is found — record
+  each as *symptom → root cause → fix → lesson*. It is written to be parsed by AI agents alongside
+  this file: correlating it to the code lets an assistant skip re-deriving solved problems and not
+  re-introduce them. Keep it secret-free (it ships public) and linked from the README. This is a
+  **per-project best practice**, not specific to this repo — start one for every project.
 
 ## Look-ahead / future work
 

@@ -209,6 +209,8 @@ oci-instance-provisioner/
 ├─ config.json.example         # Configuration blueprint (copy → config.json)
 ├─ tests/
 │  └─ Run-IntegrationTests.ps1 # Hermetic end-to-end tests (mock oci, no network)
+├─ docs/
+│  └─ TEST-FLIGHT-NOTES.md     # Lessons-learned runbook (for humans + AI agents)
 ├─ .gitignore                  # Keeps secrets/logs out of git
 ├─ LICENSE                     # MIT
 └─ README.md
@@ -240,6 +242,17 @@ so it drops cleanly into CI.
 | Repeated 404s / `NotAuthorizedOrNotFound` | Region mismatch — set `Region` in `config.json` to match your Subnet/Image/AD, and run `oci setup config` to confirm auth. |
 | Auth errors **only** under the SYSTEM Scheduled Task | SYSTEM can't see your user's `~/.oci/config`. Set `OciCliConfigPath` in `config.json`, or register with `-RunAsCurrentUser`. |
 | No ntfy push but instance created | Confirm you subscribed to the **same** topic string; check the log for the warning line. |
+
+## Lessons learned
+
+[**docs/TEST-FLIGHT-NOTES.md**](docs/TEST-FLIGHT-NOTES.md) is the field-notes runbook from taking
+Gen 1 from "pushed" to "verified flying": the live-only bugs (the ones the mocked tests couldn't
+catch), how to read OCI's error language, the deployment & ops gotchas, and the process lessons —
+each as *symptom → root cause → fix → lesson*.
+
+It's written for **humans and AI agents alike**: feed it to a coding assistant alongside
+[`CLAUDE.md`](CLAUDE.md) at the start of a session so it can correlate the lessons to the code and
+directory and avoid re-introducing solved problems.
 
 ## License
 
