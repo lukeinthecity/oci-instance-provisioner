@@ -1,0 +1,40 @@
+name: CI
+
+# Run the hermetic integration suite on every push to main / feature branches and on
+# PRs into main. The suite mocks the OCI CLI and never touches the network, so it's safe
+# to run on a public runner.
+on:
+  push:
+    branches: [ "main", "feature/**" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+# Least privilege: the job only needs to read the checked-out code.
+permissions:
+  contents: read
+
+# Cancel an in-flight run when a newer commit is pushed to the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Integration tests (Windows PowerShell 5.1)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `shell: powershell` is Windows PowerShell 5.1 on GitHub's Windows runners — the
+      # exact engine this project targets — so CI also guards the 5.1 compatibility goal.
+      - name: Show PowerShell version
+        shell: powershell
+        run: $PSVersionTable | Format-List
+
+      # The runner replaces `oci` with a local stub, so this needs no Oracle credentials
+      # and no network. A non-zero exit from the suite fails the job (red check).
+      - name: Run hermetic integration suite
+        shell: powershell
+        run: .\tests\Run-IntegrationTests.ps1

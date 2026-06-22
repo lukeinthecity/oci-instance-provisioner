@@ -2,6 +2,7 @@
 
 > A resilient PowerShell utility that automatically grabs an Oracle Cloud **Always Free** Ampere A1 (ARM) compute instance the moment capacity becomes available — and pings your phone when it lands.
 
+[![CI](https://github.com/lukeinthecity/oci-instance-provisioner/actions/workflows/ci.yml/badge.svg)](https://github.com/lukeinthecity/oci-instance-provisioner/actions/workflows/ci.yml)
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%2B-5391FE?logo=powershell&logoColor=white)](https://learn.microsoft.com/powershell/)
 [![Platform](https://img.shields.io/badge/Platform-Windows-0078D6?logo=windows&logoColor=white)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
