@@ -68,9 +68,10 @@ notepad .\config.json
 | `CompartmentId`      | ✅       | OCID of the compartment to launch into (often your root tenancy OCID).      | Console → Identity → Compartments, or `oci iam compartment list` |
 | `SubnetId`           | ✅       | OCID of the subnet for the instance's VNIC.                                 | Console → Networking → VCN → Subnets |
 | `ImageId`            | ✅       | OCID of the OS image (e.g. an aarch64 Ubuntu/Oracle Linux build).           | `oci compute image list --compartment-id <id> --shape VM.Standard.A1.Flex` |
-| `AvailabilityDomain` | ✅       | Exact AD name to target.                                                    | `oci iam availability-domain list` |
+| `AvailabilityDomain` | ✅       | **Full** AD name, including the tenancy prefix (e.g. `Uocm:US-ASHBURN-AD-1`) — the bare `US-ASHBURN-AD-1` is rejected. | `oci iam availability-domain list --compartment-id <id> --query "data[].name" --raw-output` |
 | `SshKeyPath`         | ✅       | Local path to your **public** key (`.pub`).                                 | e.g. `C:\Users\you\.ssh\id_ed25519.pub` |
 | `NtfyTopic`          | ✅       | A unique ntfy.sh topic string. Subscribe to it in the ntfy app first.       | You pick it — make it long/random so it stays private |
+| `Region`             | ⬜†      | Target region (e.g. `us-ashburn-1`). Must match your Subnet/Image/AD. If blank, the CLI's `~/.oci/config` region is used. | `oci iam region-subscription list` |
 | `Shape`              | ⬜       | Compute shape. Default `VM.Standard.A1.Flex`.                               | — |
 | `Ocpus` / `MemoryInGBs` | ⬜    | Flex shape sizing. Defaults `4` / `24` (full free allocation).             | — |
 | `DisplayName`        | ⬜       | Instance display name. Default `oci-free-arm-instance`.                      | — |
@@ -81,6 +82,8 @@ notepad .\config.json
 | `OciCliConfigPath`   | ⬜       | Absolute path to your `~/.oci/config`. Only needed for **SYSTEM** runs (see below). | — |
 | `LogPath`            | ⬜       | Custom log file path. Default: `provisioner.log` next to the script.        | — |
 | `SuccessMarkerPath`  | ⬜       | Sentinel file written on success (enables idempotency). Default: `provisioner.success`. | — |
+
+> † `Region` is technically optional but **strongly recommended** — leaving it blank relies on your `~/.oci/config` default, and a region mismatch fails on every attempt.
 
 > `config.json`, `provisioner.log`, `provisioner.success`, and key files are all in `.gitignore` — they will never be committed.
 
@@ -212,8 +215,11 @@ so it drops cleanly into CI.
 |---------|--------------------|
 | `The OCI CLI ('oci') was not found on PATH` | Install the OCI CLI and reopen your shell. |
 | `config.json could not be parsed as valid JSON` | Check for trailing commas / unescaped backslashes in paths (use `\\`). |
+| `AvailabilityDomain ... is missing its tenancy prefix` | Use the **full** AD name (e.g. `Uocm:US-ASHBURN-AD-1`) from `oci iam availability-domain list`. |
 | Loops forever with `Out of host capacity` | Working as intended — capacity is genuinely unavailable. Leave it running. |
-| Loops forever with auth errors | Run `oci setup config` and verify with `oci os ns get`. |
+| **Aborts** with a "permanent error" (auth / not-found / quota / invalid request) | Not a capacity issue — the script now fails fast and prints the real CLI error. Fix the config and re-run. |
+| Aborts citing the Always Free A1 limit | You already have an A1 instance (cap is 4 OCPU / 24 GB per tenancy). Terminate it, or lower `Ocpus`/`MemoryInGBs`. |
+| Repeated 404s / `NotAuthorizedOrNotFound` | Region mismatch — set `Region` in `config.json` to match your Subnet/Image/AD, and run `oci setup config` to confirm auth. |
 | Auth errors **only** under the SYSTEM Scheduled Task | SYSTEM can't see your user's `~/.oci/config`. Set `OciCliConfigPath` in `config.json`, or register with `-RunAsCurrentUser`. |
 | No ntfy push but instance created | Confirm you subscribed to the **same** topic string; check the log for the warning line. |
 

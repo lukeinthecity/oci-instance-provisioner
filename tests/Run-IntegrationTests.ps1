@@ -46,11 +46,32 @@ function New-TestDir([string]$Name) {
     return $d
 }
 function New-SuccessOci([string]$Dir) {
-    # Prints a real-looking instance OCID to stdout AND a harmless notice to stderr,
-    # exits 0. This is the exact shape that broke the original script.
+    # A stub OCI CLI: prints a real-looking instance OCID to stdout AND a harmless
+    # notice to stderr, then exits 0 -- the exact shape that broke the original script.
+    # When python is present (the real OCI CLI requires it), the stub also validates that
+    # --shape-config survived the PowerShell -> native-exe boundary as real JSON, so a
+    # regression in quote-escaping makes this stub exit 1 just like the real CLI does.
+    @'
+import sys, json
+a = sys.argv[1:]
+try:
+    json.loads(a[a.index("--shape-config") + 1])
+except Exception:
+    sys.exit(3)
+sys.exit(0)
+'@ | Set-Content -Path (Join-Path $Dir 'validate_shape.py') -Encoding ASCII
     @'
 @echo off
 echo oci-was-called>> "%~dp0oci_called.txt"
+echo %*>> "%~dp0oci_args.txt"
+where python >nul 2>nul
+if errorlevel 1 goto emit
+python "%~dp0validate_shape.py" %*
+if errorlevel 1 (
+  echo ServiceError: Parameter 'shape_config' must be in JSON format. 1>&2
+  exit /b 1
+)
+:emit
 echo {"data": {"id": "ocid1.instance.oc1.iad.aaaaexamplefake"}}
 echo WARNING: a harmless non-fatal notice 1>&2
 exit /b 0
@@ -64,19 +85,37 @@ echo ServiceError: Out of host capacity. 1>&2
 exit /b 1
 '@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
 }
+function New-PermanentlyFailingOci([string]$Dir) {
+    # Simulates a non-retryable error (bad AD / auth / not found): the API returns
+    # 404 NotAuthorizedOrNotFound. The script must FAIL FAST, not loop on "capacity".
+    @'
+@echo off
+echo oci-was-called>> "%~dp0oci_called.txt"
+echo ServiceError: NotAuthorizedOrNotFound. Authorization failed or requested resource not found. 1>&2
+exit /b 1
+'@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
+}
 function New-Key([string]$Dir) {
     Set-Content -Path (Join-Path $Dir 'key.pub') -Value 'ssh-ed25519 AAAAtest test@host' -Encoding ASCII
 }
 function New-ValidConfig {
-    param([string]$Dir, [string]$NtfyServer = 'https://ntfy.sh', [int]$BaseDelay = 60, [int]$Jitter = 30)
+    param(
+        [string]$Dir,
+        [string]$NtfyServer = 'https://ntfy.sh',
+        [int]$BaseDelay = 60,
+        [int]$Jitter = 30,
+        [string]$AvailabilityDomain = 'abCD:US-ASHBURN-AD-1',
+        [string]$Region = ''
+    )
     ([ordered]@{
         CompartmentId      = 'ocid1.tenancy.oc1.aaaareal'
         SubnetId           = 'ocid1.subnet.oc1.iad.aaaareal'
         ImageId            = 'ocid1.image.oc1.iad.aaaareal'
-        AvailabilityDomain = 'abCD:US-ASHBURN-AD-1'
+        AvailabilityDomain = $AvailabilityDomain
         SshKeyPath         = (Join-Path $Dir 'key.pub')
         NtfyTopic          = 'hermetic-test-topic'
         NtfyServer         = $NtfyServer
+        Region             = $Region
         BaseDelaySeconds   = $BaseDelay
         JitterSeconds      = $Jitter
     } | ConvertTo-Json) | Set-Content -Path (Join-Path $Dir 'config.json') -Encoding UTF8
@@ -158,8 +197,39 @@ try {
         if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
     } finally { $env:PATH = $oldPath }
     $log = if (Test-Path (Join-Path $d 'provisioner.log')) { Get-Content (Join-Path $d 'provisioner.log') -Raw } else { '' }
-    Assert ($log -match 'Capacity unavailable or request rejected') "logged the failure reason"
-    Assert ($log -match 'Backing off')                              "entered jitter backoff and kept retrying"
+    Assert ($log -match 'Out of host capacity') "surfaced the real CLI failure reason"
+    Assert ($log -match 'will retry')           "classified capacity error as transient"
+    Assert ($log -match 'Backing off')          "entered jitter backoff and kept retrying"
+
+    # --- Scenario 6: bare AvailabilityDomain (missing tenancy prefix) => fail fast ---
+    Write-Host "`n[6] Bare AvailabilityDomain (no tenancy prefix)"
+    $d = New-TestDir '6-bare-ad'
+    New-SuccessOci $d; New-Key $d
+    New-ValidConfig -Dir $d -AvailabilityDomain 'US-ASHBURN-AD-1'   # no colon => invalid
+    $r = Invoke-Provisioner $d
+    Assert ($r.ExitCode -eq 1)                                   "exits 1"
+    Assert ($r.Out -match 'missing its tenancy prefix')          "explains the AD-prefix problem"
+    Assert (-not (Test-Path (Join-Path $d 'oci_called.txt')))    "fails preflight before invoking oci"
+
+    # --- Scenario 7: permanent API error => abort fast, do NOT loop on "capacity" ---
+    Write-Host "`n[7] Permanent error (NotAuthorizedOrNotFound)"
+    $d = New-TestDir '7-permanent'
+    New-PermanentlyFailingOci $d; New-Key $d; New-ValidConfig -Dir $d -BaseDelay 1 -Jitter 0
+    $r = Invoke-Provisioner $d
+    Assert ($r.ExitCode -eq 1)                                   "exits 1 (does not loop forever)"
+    Assert ($r.Out -match 'Non-retryable')                       "labels it non-retryable"
+    Assert ($r.Out -match 'NotAuthorizedOrNotFound')             "surfaces the real CLI error"
+    Assert ($r.Out -notmatch 'Backing off')                      "does NOT enter the backoff loop"
+
+    # --- Scenario 8: Region pins --region in the launch args ---
+    Write-Host "`n[8] Region => --region passed to oci"
+    $d = New-TestDir '8-region'
+    New-SuccessOci $d; New-Key $d
+    New-ValidConfig -Dir $d -NtfyServer 'http://127.0.0.1:1' -Region 'us-ashburn-1'
+    $r = Invoke-Provisioner $d
+    $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
+    Assert ($r.ExitCode -eq 0)                                   "exits 0"
+    Assert ($ociArgs -match '--region us-ashburn-1')             "passed --region to the CLI"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

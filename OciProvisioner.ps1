@@ -172,6 +172,11 @@ $AssignPublicIp = Get-ConfigValue -Name 'AssignPublicIp' -Default $true
 $BaseDelay      = [int](Get-ConfigValue -Name 'BaseDelaySeconds' -Default 60)
 $JitterRange    = [int](Get-ConfigValue -Name 'JitterSeconds'    -Default 30)
 
+# Target region for the launch. STRONGLY recommended: it must match the region of your
+# SubnetId / ImageId / AvailabilityDomain. If left blank the CLI falls back to the region
+# in ~/.oci/config, which can silently mismatch and 404 forever (see preflight below).
+$Region         = Get-ConfigValue -Name 'Region' -Default ''
+
 # ntfy endpoint. Defaults to the public service; override to point at a self-hosted
 # instance. Trailing slash trimmed so the URI is built cleanly below.
 $NtfyServer     = (Get-ConfigValue -Name 'NtfyServer' -Default 'https://ntfy.sh').TrimEnd('/')
@@ -183,9 +188,13 @@ $LogPath = Get-ConfigValue -Name 'LogPath' -Default (Join-Path -Path $PSScriptRo
 # makes the script idempotent — see the idempotency gate below.
 $SuccessMarkerPath = Get-ConfigValue -Name 'SuccessMarkerPath' -Default (Join-Path -Path $PSScriptRoot -ChildPath 'provisioner.success')
 
-# The OCI CLI expects shape config as a JSON string; build it from typed values
-# so we never ship a malformed payload.
-$ShapeConfigJson = @{ ocpus = $Ocpus; memoryInGBs = $MemoryInGBs } | ConvertTo-Json -Compress
+# The OCI CLI expects --shape-config as a JSON string. Critical PowerShell gotcha:
+# when a string containing double quotes is passed to a NATIVE exe, the quotes are
+# stripped, so 'oci' receives {ocpus:4,memoryInGBs:24} and rejects it with
+# "Parameter 'shape_config' must be in JSON format". Escaping the inner quotes as \"
+# lets them survive the native-command boundary intact. Keep -Compress (no spaces)
+# so the value stays a single argument.
+$ShapeConfigJson = (@{ ocpus = $Ocpus; memoryInGBs = $MemoryInGBs } | ConvertTo-Json -Compress) -replace '"', '\"'
 
 # ==============================================================================
 #  REGION: Idempotency gate
@@ -225,6 +234,34 @@ if (-not (Test-Path -LiteralPath $Config.SshKeyPath -PathType Leaf)) {
     Exit-Fatal "SSH public key not found at '$($Config.SshKeyPath)' (config.SshKeyPath). Point this at your .pub key."
 }
 
+# Availability Domain must carry its tenancy-specific prefix (e.g. 'Uocm:US-ASHBURN-AD-1').
+# A bare 'US-ASHBURN-AD-1' is never valid: the API rejects it (404) on EVERY attempt, which
+# the backoff loop would otherwise mistake for transient capacity and retry forever.
+if ($Config.AvailabilityDomain -notmatch ':') {
+    Exit-Fatal @"
+AvailabilityDomain '$($Config.AvailabilityDomain)' is missing its tenancy prefix.
+Real OCI AD names look like 'Uocm:US-ASHBURN-AD-1' (the prefix is assigned per-tenancy and
+is NOT derivable). Get the exact value with:
+  oci iam availability-domain list --compartment-id $($Config.CompartmentId) --query "data[].name" --raw-output
+then paste it verbatim into config.json (AvailabilityDomain).
+"@
+}
+
+# Region-alignment sanity check. Subnet/image OCIDs are region-pinned (the region token sits
+# at index 3, e.g. 'iad' in ocid1.subnet.oc1.iad.xxxx). The region the CLI actually talks to
+# comes from ~/.oci/config unless we pass --region, and a mismatch 404s forever. Warn loudly
+# on any disagreement so it's obvious at startup rather than hidden as "capacity".
+$subnetParts = $Config.SubnetId -split '\.'
+$imageParts  = $Config.ImageId  -split '\.'
+$subnetRegionToken = if ($subnetParts.Count -gt 3) { $subnetParts[3] } else { '' }
+$imageRegionToken  = if ($imageParts.Count  -gt 3) { $imageParts[3]  } else { '' }
+if ($subnetRegionToken -and $imageRegionToken -and $subnetRegionToken -ne $imageRegionToken) {
+    Write-Log -Path $LogPath -Level WARN -Message "SubnetId region '$subnetRegionToken' != ImageId region '$imageRegionToken' - these resources are in different regions and the launch will fail."
+}
+if (-not $Region) {
+    Write-Log -Path $LogPath -Level WARN -Message "No 'Region' set in config.json; the OCI CLI will use the region from ~/.oci/config. Your resources are in region '$subnetRegionToken' - if the CLI's active region differs, every attempt will 404. Set 'Region' in config.json to be safe."
+}
+
 # ==============================================================================
 #  REGION: Provisioning loop
 # ==============================================================================
@@ -247,8 +284,10 @@ while ($true) {
         # native executable, not a PowerShell cmdlet, so hashtable splatting would NOT
         # map to --flags. Splatting an array (@LaunchArgs) passes each element as a
         # discrete, correctly-quoted argument.
-        $LaunchArgs = @(
-            'compute', 'instance', 'launch',
+        $LaunchArgs = @('compute', 'instance', 'launch')
+        # Pin the region when configured so it can't silently diverge from the CLI default.
+        if ($Region) { $LaunchArgs += @('--region', $Region) }
+        $LaunchArgs += @(
             '--compartment-id',        $Config.CompartmentId,
             '--availability-domain',   $Config.AvailabilityDomain,
             '--subnet-id',             $Config.SubnetId,
@@ -325,14 +364,45 @@ $($Response.Trim())
         break
     }
     catch {
-        # ---- BACKOFF PATH ----
-        # Randomized jitter on top of the base delay spreads retries out and avoids
-        # hammering the OCI capacity API in lock-step. (Refactoring Target — jitter backoff.)
+        # ---- FAILURE PATH ----
+        # Distinguish failures that will NEVER clear by waiting (auth, not-found, bad AD,
+        # quota, invalid request) from genuinely transient ones (capacity, throttling, 5xx).
+        # On a remote, always-on PC, retrying a permanent error forever — mislabeled as
+        # "capacity" — is exactly the expensive, undiagnosable failure mode we must avoid.
+        $rawResponse = if ($Response) { ($Response.Trim() -replace '\s+', ' ') } else { '' }
+
+        $permanentSignatures = 'NotAuthorizedOrNotFound|NotAuthenticated|NotAuthorized|is not authorized|LimitExceeded|QuotaExceeded|service limit|CannotParseRequest|InvalidParameter|MissingParameter|does not exist'
+        $transientSignatures = 'Out of host capacity|OutOfCapacity|OutOfHostCapacity|TooManyRequests|throttl|Service.*Unavailable|InternalServerError|timed out|timeout'
+
+        # A clearly-permanent error (and not also transient) stops the loop immediately,
+        # surfacing the REAL CLI message instead of pretending it was a capacity wait.
+        if ($rawResponse -match $permanentSignatures -and $rawResponse -notmatch $transientSignatures) {
+            Write-Log -Path $LogPath -Level ERROR -Message 'Non-retryable error from the OCI CLI - this will NOT resolve by waiting:'
+            Write-Log -Path $LogPath -Level ERROR -Message $rawResponse
+            Exit-Fatal @"
+Provisioning aborted: OCI returned a permanent error (auth / not-found / quota / invalid request).
+Retrying will not help — fix the underlying configuration and re-run. Common causes:
+  - AvailabilityDomain, Region, or the OCIDs point at the wrong tenancy/region.
+  - You are already at the Always Free A1 limit (4 OCPU / 24 GB per tenancy) — terminate the
+    existing instance, or lower Ocpus/MemoryInGBs in config.json.
+
+Raw CLI output:
+$rawResponse
+"@
+        }
+
+        # Transient (or unrecognized): back off and retry. Randomized jitter spreads retries
+        # out instead of hammering the capacity API in lock-step.
         $RandomJitter = Get-Random -Minimum 0 -Maximum ($JitterRange + 1)
         $TotalSleep   = $BaseDelay + $RandomJitter
 
-        Write-Log -Path $LogPath -Level WARN -Message "Capacity unavailable or request rejected: $($_.Exception.Message)"
-        if ($Response) { Write-Log -Path $LogPath -Level INFO -Message ("Last response: {0}" -f ($Response.Trim() -replace '\s+', ' ')) }
+        if ($rawResponse -match $transientSignatures) {
+            Write-Log -Path $LogPath -Level WARN -Message "Capacity/transient error - will retry: $($_.Exception.Message)"
+        } else {
+            # Never silently mislabel an unexpected failure as capacity — surface it loudly.
+            Write-Log -Path $LogPath -Level WARN -Message "Launch failed (unclassified - see raw output): $($_.Exception.Message)"
+        }
+        if ($rawResponse) { Write-Log -Path $LogPath -Level INFO -Message "Raw CLI output: $rawResponse" }
         Write-Log -Path $LogPath -Level INFO -Message "Backing off ${TotalSleep}s (base ${BaseDelay}s + jitter ${RandomJitter}s)..."
 
         Start-Sleep -Seconds $TotalSleep
