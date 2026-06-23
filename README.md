@@ -23,7 +23,7 @@ the instant it succeeds.
 
 > **Use responsibly.** This is a personal-use retry helper for resources you're entitled to under
 > the Always Free tier. The built-in jitter backoff exists specifically so you don't hammer
-> Oracle's API. Respect the [Oracle Cloud Terms of Service](https://www.oracle.com/legal/cloud-services-agreement/).
+> Oracle's API. Respect the [Oracle Cloud Terms of Service]([https://www.oracle.com/legal/cloud-services-agreement/](https://www.oracle.com/contracts/cloud-services/)).
 
 ## Features
 
