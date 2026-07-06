@@ -1,0 +1,22 @@
+**Findings**
+- **High: docs overclaim the live result.** [docs/TEST-FLIGHT-NOTES.md](</Users/lukes/Desktop/oci-instance-provisioner/docs/TEST-FLIGHT-NOTES.md:152>) says “Verified end-to-end against a live tenancy,” and the surrounding language implies Gen 1 has completed a real successful provision. Based on your note, it has only been verified running against the live API and correctly retrying capacity failures. Before public listing, change this to something like “live test flight in progress; launch success not yet observed.”
+- **High: tracked AI/project context still says the repo is private.** [CLAUDE.md](</Users/lukes/Desktop/oci-instance-provisioner/CLAUDE.md:4>) explicitly says it is kept tracked while private and should be scrubbed before public. The README also points public readers/agents back to it at [README.md](</Users/lukes/Desktop/oci-instance-provisioner/README.md:258>). Either remove `CLAUDE.md` from the public repo, or rewrite it as a public `AGENTS.md` with no “private” language and an updated roadmap.
+- **Medium: local release state is not clean.** The checkout is on `feature/wait-for-running` with uncommitted changes in [OciProvisioner.ps1](</Users/lukes/Desktop/oci-instance-provisioner/OciProvisioner.ps1>), [README.md](</Users/lukes/Desktop/oci-instance-provisioner/README.md>), [config.json.example](</Users/lukes/Desktop/oci-instance-provisioner/config.json.example>), and [tests/Run-IntegrationTests.ps1](</Users/lukes/Desktop/oci-instance-provisioner/tests/Run-IntegrationTests.ps1>). Those changes pass local tests now, but they have not gone through GitHub CI/lint. Do not publish or tag from this working tree until that feature is committed through PR or set aside.
+- **Medium: untracked local agent files could be accidentally published.** `.claude/settings.local.json` and `AGENTS.md` are untracked, and [.gitignore](</Users/lukes/Desktop/oci-instance-provisioner/.gitignore>) does not ignore `.claude/`. Add `.claude/` to `.gitignore`. Then decide whether `AGENTS.md` replaces `CLAUDE.md` or stays local only; do not accidentally ship both as duplicated, stale context.
+- **Low: local `main` is stale.** `origin/main` is current at `dc49a33`, but local `main` is still at the initial commit and behind by 13. This does not affect GitHub, but it will confuse future work unless you update local `main`.
+
+**What Looks Good**
+- Current `origin/main` has CI and PSScriptAnalyzer merged and previously green.
+- I ran the dirty branch’s integration suite locally: **42 passed, 0 failed**, including the new wait-for-RUNNING scenario.
+- Current-tree and all-history grep found placeholders/test values only for OCIDs, ntfy topics, key paths, and private key patterns. I did not see your real AD prefix, ntfy topic, key material, or personal config in tracked history.
+- The core engineering shape is solid: config is decoupled, no secrets are expected in tracked files, failures are classified, multi-AD polling is sequential, and the scheduled-task/idempotency story is well documented.
+
+**Verdict**
+Not quite ready for a polished public listing yet. The code on `origin/main` is close, but I would not make the repo public until you fix the documentation accuracy and AI-context cleanup. The fact that the tool has not successfully provisioned yet is not a blocker if you label it clearly as “live test flight in progress,” but it is a blocker for any wording that implies successful end-to-end provisioning.
+
+Recommended pre-public checklist:
+1. Update `docs/TEST-FLIGHT-NOTES.md` to say the live run is active but has not yet landed an instance.
+2. Remove or public-scrub `CLAUDE.md`; optionally promote a cleaned `AGENTS.md`.
+3. Add `.claude/` to `.gitignore`.
+4. Either finish/PR `feature/wait-for-running` or keep it off `main`.
+5. Update local `main` so future branches start from the real public baseline.
