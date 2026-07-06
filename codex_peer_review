@@ -20,3 +20,9 @@ Recommended pre-public checklist:
 3. Add `.claude/` to `.gitignore`.
 4. Either finish/PR `feature/wait-for-running` or keep it off `main`.
 5. Update local `main` so future branches start from the real public baseline.
+
+For this repo, my standing reviewer position is:
+origin/main is close to public-ready, but not yet public-polished.
+The main blockers are presentation and repo hygiene, not the provisioning engine itself.
+I would not publicly list it until the docs stop implying a successful provision and the tracked/private agent context is cleaned up.
+The running remote instance hunt is valid live testing, but until it lands, call it “live test flight in progress,” not “verified end-to-end.”
