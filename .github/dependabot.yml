@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Keep the GitHub Actions used in ci.yml current and get Dependabot alerts
+  # if an action we depend on ships a security advisory.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
