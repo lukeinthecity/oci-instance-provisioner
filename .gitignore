@@ -20,7 +20,7 @@ id_ed25519
 
 # ------------------------------------------------------------------
 # Local AI-agent state & scratch notes — machine-specific, never ship.
-# (Shared agent context lives in the tracked CLAUDE.md instead.)
+# (Shared agent context lives in the tracked AGENTS.md instead.)
 # ------------------------------------------------------------------
 .claude/
 codex_peer_review*

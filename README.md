@@ -252,7 +252,7 @@ catch), how to read OCI's error language, the deployment & ops gotchas, and the 
 each as *symptom → root cause → fix → lesson*.
 
 It's written for **humans and AI agents alike**: feed it to a coding assistant alongside
-[`CLAUDE.md`](CLAUDE.md) at the start of a session so it can correlate the lessons to the code and
+[`AGENTS.md`](AGENTS.md) at the start of a session so it can correlate the lessons to the code and
 directory and avoid re-introducing solved problems.
 
 ## Roadmap

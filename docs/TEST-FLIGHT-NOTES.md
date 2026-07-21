@@ -6,7 +6,7 @@
 > lessons that don't live in the source.
 
 > **Purpose — written for AI agents as much as for humans.** Feed this file to an AI coding
-> assistant at the *start* of a session, alongside [`CLAUDE.md`](../CLAUDE.md). Parsed against the
+> assistant at the *start* of a session, alongside [`AGENTS.md`](../AGENTS.md). Parsed against the
 > codebase and directory layout, it lets the agent skip re-deriving these hard-won lessons and
 > avoid re-introducing problems we already solved. Re-discovering a known pain point costs a full
 > (and, for this project, slow) feedback cycle; this document is how we spend that knowledge once
@@ -154,6 +154,6 @@ live tenancy — real API calls, correct classification and retry of genuine cap
 but a successful launch has not yet been observed. Capacity simply hasn't opened up in the target
 region; the hunt continues. This doc will be updated when the first instance lands.
 
-**Next (see the roadmap in [`CLAUDE.md`](../CLAUDE.md)):** cross-*region* rotation, and an
-optional wait-for-RUNNING that surfaces the public IP in the success notification. (GitHub
+**Next (see the [Roadmap](../README.md#roadmap)):** cross-*region* rotation, and an optional
+wait-for-RUNNING that surfaces the public IP in the success notification. (GitHub
 Actions CI running the suite on every push — with status badge — has since shipped.)
