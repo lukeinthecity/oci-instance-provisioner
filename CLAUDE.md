@@ -12,8 +12,9 @@ Cloud **Always Free** Ampere A1 (ARM) instance, retrying with a randomized jitte
 until capacity is available, then fires an ntfy.sh push on success. It is designed to run
 unattended — interactively, or as a startup Scheduled Task (current user or SYSTEM).
 
-Current state: refactored from a single hardcoded script into a clean, configurable,
-**tested** repo. Secrets are fully decoupled into a git-ignored `config.json`.
+Current state: a clean, configurable, **tested**, **public** repo — `v1.0.0` released. Secrets
+are fully decoupled into a git-ignored `config.json`. CI, linting, secret scanning, Dependabot,
+and branch protection on `main` are all live (see **CI, security & repo governance** below).
 
 ## Repo layout
 
@@ -24,7 +25,12 @@ Current state: refactored from a single hardcoded script into a clean, configura
 | `config.json.example` | Blueprint; copied to `config.json` (ignored by git) |
 | `tests/Run-IntegrationTests.ps1` | Hermetic end-to-end tests (mock `oci`, no network) |
 | `docs/TEST-FLIGHT-NOTES.md` | Living lessons-learned runbook — **read this first** (see Conventions) |
-| `.gitignore` / `LICENSE` | Secrets+logs excluded / MIT, © Luke Shefski |
+| `.github/workflows/ci.yml` | CI: three required jobs — tests, PSScriptAnalyzer, gitleaks |
+| `PSScriptAnalyzerSettings.psd1` | Lint ruleset consumed by the CI lint job |
+| `.github/dependabot.yml` | Weekly `github-actions` dependency updates |
+| `SECURITY.md` | Vulnerability disclosure policy (GitHub private reporting) |
+| `.github/FUNDING.yml` | Sponsor / funding links |
+| `.gitignore` / `LICENSE` | Secrets+logs, plus `.claude/` & `codex_peer_review*`, excluded / MIT, © Luke Shefski |
 
 ## Design decisions & gotchas (do not regress these)
 
@@ -82,15 +88,43 @@ pass. Preserve them:
   re-introduce them. Keep it secret-free (it ships public) and linked from the README. This is a
   **per-project best practice**, not specific to this repo — start one for every project.
 
+## CI, security & repo governance
+
+Everything here shipped during the go-public pass. An agent working on this repo **must** know:
+
+- **CI has three required jobs** (`.github/workflows/ci.yml`), all gating merges into `main`:
+  - `Integration tests (Windows PowerShell 5.1)` — runs `tests/Run-IntegrationTests.ps1` on `windows-latest`.
+  - `PSScriptAnalyzer` — lints against `PSScriptAnalyzerSettings.psd1`, fails on any finding.
+  - `Secret scan (gitleaks)` — runs on `ubuntu-latest` with `fetch-depth: 0`, scanning **full history** on every push/PR.
+- **`main` is a protected branch.** You **cannot push to `main` directly** and **cannot merge a PR
+  until all three checks are green** — the ruleset has no admin bypass. Always: branch → push →
+  open PR → wait for green → merge. A direct push or an early merge is rejected with
+  `405 Repository rule violations found`.
+- **Never commit secrets — gitleaks fails the build**, and the scan covers history, not just the
+  working tree. `config.json`, `*.pem`, `*.key`, and the SSH-key patterns are git-ignored; keep it
+  that way.
+- **GitHub Actions are pinned and Dependabot-managed** (`.github/dependabot.yml`, weekly). Current
+  pins: `actions/checkout@v7`, `gitleaks/gitleaks-action@v3`. Let Dependabot bump these — don't
+  hand-edit action versions unless fixing a break.
+- **Vulnerability disclosure** goes through GitHub's private vulnerability reporting (Security tab),
+  documented in `SECURITY.md` — no personal email in tracked files.
+- **Releases:** `v1.0.0` is tagged. Only cut a new tag when the **provisioning logic itself** changes
+  (`OciProvisioner.ps1` / `Register-ScheduledTask.ps1`); docs/CI/meta changes ride along on `main`
+  without a release.
+
 ## Look-ahead / future work
 
-Roughly highest-value first:
+The **canonical, user-facing roadmap now lives in the README** ([Roadmap](README.md#roadmap)) — keep
+the two roughly in sync when scope changes. Agent-facing snapshot:
 
-- [x] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
-- [x] **Linting**: `PSScriptAnalyzer` runs in CI; findings cleaned up.
-- [x] **AD fallback**: `AvailabilityDomain` accepts a list; the loop sweeps all ADs each cycle, and `Region` can be pinned. (Cross-*region* rotation is still open.)
-- [ ] **Optional wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
+**Shipped:** CI, linting, gitleaks secret scanning, multi-AD sweep + `Region` pinning, `v1.0.0`,
+branch protection, Dependabot, `SECURITY.md`.
+
+**Open (highest-value first):**
+
+- [ ] **Wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
+- [ ] **Cross-region rotation**: sweep regions, not just ADs within one.
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
-- [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.
+- [ ] **Pester**: optionally migrate the integration suite to Pester once time allows.
 - [ ] **Docs polish**: a short asciinema/screenshot of a successful run for the README.
-- [x] **Release hygiene**: `v1.0.0` tagged. `CONTRIBUTING.md` still open if accepting outside PRs.
+- [ ] **`CONTRIBUTING.md`**: add if/when accepting outside PRs.
