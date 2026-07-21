@@ -252,8 +252,30 @@ catch), how to read OCI's error language, the deployment & ops gotchas, and the 
 each as *symptom → root cause → fix → lesson*.
 
 It's written for **humans and AI agents alike**: feed it to a coding assistant alongside
-[`CLAUDE.md`](CLAUDE.md) at the start of a session so it can correlate the lessons to the code and
+[`AGENTS.md`](AGENTS.md) at the start of a session so it can correlate the lessons to the code and
 directory and avoid re-introducing solved problems.
+
+## Roadmap
+
+Where the project has been and where it's going, roughly highest-value first. Everything under
+**Shipped** is live on `main`; **Planned** items are open — issues and PRs welcome.
+
+**Shipped**
+
+- [x] **CI** — GitHub Actions runs the hermetic suite on `windows-latest` on every push (status badge up top).
+- [x] **Linting** — `PSScriptAnalyzer` runs in CI, findings kept clean.
+- [x] **Secret scanning** — gitleaks scans the full history on every push/PR, as a backstop to `.gitignore`.
+- [x] **Multi-AD fallback** — `AvailabilityDomain` takes a list and the loop sweeps every AD each cycle; `Region` can be pinned.
+- [x] **v1.0.0** — first tagged release.
+
+**Planned**
+
+- [ ] **Wait-for-RUNNING** — pass `--wait-for-state` and surface the new instance's public IP in the log and the ntfy push.
+- [ ] **Cross-region rotation** — sweep multiple regions, not just multiple ADs within one.
+- [ ] **Cross-platform** — a `pwsh` + cron path so Linux/macOS users can run it too.
+- [ ] **Pester** — optionally migrate the integration suite to Pester.
+- [ ] **Docs polish** — an asciinema clip or screenshot of a successful run.
+- [ ] **`CONTRIBUTING.md`** — a contribution guide if/when outside PRs are accepted.
 
 ## License
 
