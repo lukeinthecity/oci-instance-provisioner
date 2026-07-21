@@ -6,8 +6,10 @@ provision infrastructure you didn't ask for), please report it responsibly.
 
 ## Reporting a vulnerability
 
-Email **luke.shefski@gmail.com** with a description and, if possible, steps to reproduce. Please
-don't open a public issue for anything that could be actively exploited before a fix ships.
+Please use GitHub's [private vulnerability reporting](../../security/advisories/new) — the
+**"Report a vulnerability"** button under this repo's **Security** tab — instead of a public
+issue. It opens a private draft advisory so nothing gets disclosed before a fix ships, and keeps
+the whole thread with maintainer replies in one place.
 
 There's no bug bounty and no guaranteed response time, but reports will be looked at and a fix
 or mitigation will be pushed as soon as practical. Credit is welcome if you'd like it.
