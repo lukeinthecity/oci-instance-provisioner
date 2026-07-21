@@ -76,6 +76,6 @@ jobs:
       # a private key, or anything else that looks like a credential ever gets
       # committed — including in a PR's added commits, not just the current tree.
       - name: Run gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
