@@ -1,7 +1,9 @@
 # Project Context — OCI Instance Provisioner
 
-> Context + working agreement for Claude Code on this repo. Kept tracked while the repo is
-> **private**; scrub or remove before going public (see "Before going public" below).
+> Context + working agreement for AI coding agents (Claude Code and friends) on this repo.
+> Deliberately kept tracked and public: it documents intent, hard-won gotchas, and the roadmap,
+> so an agent (or a human) can pick up the project without re-deriving any of it. Keep it
+> secret-free — anything user-specific belongs in the git-ignored `config.json`.
 
 ## What this is
 
@@ -84,16 +86,11 @@ pass. Preserve them:
 
 Roughly highest-value first:
 
-- [ ] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
-- [ ] **Linting**: run `PSScriptAnalyzer` in CI and clean up findings.
+- [x] **CI**: GitHub Actions workflow running the test suite on `windows-latest` (+ status badge).
+- [x] **Linting**: `PSScriptAnalyzer` runs in CI; findings cleaned up.
 - [x] **AD fallback**: `AvailabilityDomain` accepts a list; the loop sweeps all ADs each cycle, and `Region` can be pinned. (Cross-*region* rotation is still open.)
 - [ ] **Optional wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
 - [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.
 - [ ] **Docs polish**: a short asciinema/screenshot of a successful run for the README.
-
-## Before going public
-
-- [ ] Decide whether to keep this `CLAUDE.md` (it documents intent) or remove/trim it.
-- [ ] Confirm no real OCIDs, key paths, or ntfy topics ever landed in tracked files or history.
-- [ ] Add a `CONTRIBUTING.md` if accepting PRs; tag an initial release.
+- [ ] **Release hygiene**: add a `CONTRIBUTING.md` if accepting PRs; tag an initial release.

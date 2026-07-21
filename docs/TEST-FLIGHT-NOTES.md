@@ -148,9 +148,12 @@ a human was running it against the live remote and reading the output — the bu
 ## Where Gen 1 stands
 
 Running headless as a Scheduled Task, sweeping all configured Availability Domains each cycle,
-classifying permanent vs transient failures, idempotent against reboots and re-runs, and firing
-an ntfy push on success. Verified end-to-end against a live tenancy.
+classifying permanent vs transient failures, idempotent against reboots and re-runs, and set to
+fire an ntfy push on success. **Live test flight in progress:** the loop is verified against the
+live tenancy — real API calls, correct classification and retry of genuine capacity failures —
+but a successful launch has not yet been observed. Capacity simply hasn't opened up in the target
+region; the hunt continues. This doc will be updated when the first instance lands.
 
-**Next (see the roadmap in [`CLAUDE.md`](../CLAUDE.md)):** GitHub Actions CI running the suite on
-every push (+ status badge), cross-*region* rotation, and an optional wait-for-RUNNING that
-surfaces the public IP in the success notification.
+**Next (see the roadmap in [`CLAUDE.md`](../CLAUDE.md)):** cross-*region* rotation, and an
+optional wait-for-RUNNING that surfaces the public IP in the success notification. (GitHub
+Actions CI running the suite on every push — with status badge — has since shipped.)
