@@ -93,4 +93,4 @@ Roughly highest-value first:
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
 - [ ] **Pester**: optionally migrate the integration suite to Pester once CI is in place.
 - [ ] **Docs polish**: a short asciinema/screenshot of a successful run for the README.
-- [ ] **Release hygiene**: add a `CONTRIBUTING.md` if accepting PRs; tag an initial release.
+- [x] **Release hygiene**: `v1.0.0` tagged. `CONTRIBUTING.md` still open if accepting outside PRs.
