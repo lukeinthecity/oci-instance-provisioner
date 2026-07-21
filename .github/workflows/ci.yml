@@ -62,3 +62,20 @@ jobs:
             exit 1
           }
           Write-Host "PSScriptAnalyzer: clean (0 issues)."
+
+  secret-scan:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # Belt-and-suspenders on top of .gitignore: fails the build if config.json,
+      # a private key, or anything else that looks like a credential ever gets
+      # committed — including in a PR's added commits, not just the current tree.
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
