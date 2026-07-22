@@ -20,6 +20,9 @@
   "DisplayName": "oci-free-arm-instance",
   "AssignPublicIp": true,
 
+  "_antiIdleKeepAlive": "On by default. Bakes a cloud-init cron job into the launch (runs on the instance itself, every 6h) that briefly burns one core so Oracle's idle-instance reclamation never sees a genuinely idle box. Set to false to opt out.",
+  "AntiIdleKeepAlive": true,
+
   "_ntfyServer": "Optional ntfy base URL. Defaults to https://ntfy.sh. Point this at your own server to self-host notifications.",
   "NtfyServer": "https://ntfy.sh",
 

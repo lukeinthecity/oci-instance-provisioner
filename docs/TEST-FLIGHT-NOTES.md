@@ -162,10 +162,13 @@ own live tenancy — treat as a documented risk to design around, not a confirme
   compute instances that stay near-zero on CPU, network, and memory utilization for an extended
   period (thresholds aren't published precisely and can change — verify against Oracle's current
   docs rather than trusting a fixed number here). The community's low-effort mitigation is a
-  periodic "dummy load" cron job on the instance that keeps utilization signals non-zero. Gen 1's
-  job currently ends at a successful launch (config → preflight → retry/launch → validate →
-  notify, then exit) — it runs nothing on the instance afterward. See the roadmap for a planned
-  anti-idle keep-alive baked into the launch's cloud-init.
+  periodic "dummy load" cron job on the instance that keeps utilization signals non-zero. Gen 1
+  now ships this: a cloud-init `write_files` cron job is baked into the launch's `user_data`
+  (`AntiIdleKeepAlive`, on by default, `--metadata` on the `oci compute instance launch` call)
+  that briefly burns one core every 6h. It hasn't been exercised on a live instance yet — no
+  instance has landed during the test flight — so it's tested hermetically (see
+  `tests/Run-IntegrationTests.ps1`) but not yet reality-tested. Opt out with
+  `AntiIdleKeepAlive: false` in `config.json`.
 
 ---
 

@@ -72,6 +72,12 @@ pass. Preserve them:
 11. **Multi-AD sweep, never parallel.** `AvailabilityDomain` may be a string or a list; the
     loop tries each AD back-to-back per cycle and stops on the first success. Do NOT parallelize
     — concurrent successes would provision multiple instances and exceed the free allocation.
+12. **Anti-idle keep-alive (`AntiIdleKeepAlive`, default `true`).** Oracle can reclaim a
+    genuinely idle Always Free instance (see `docs/TEST-FLIGHT-NOTES.md`). Mitigated by baking a
+    cloud-init `write_files` cron job into the launch's `user_data` (base64-encoded, passed via
+    `--metadata`) that briefly burns one core every 6h so utilization never reads as idle. Reuses
+    the same native-exe quote-escaping as `$ShapeConfigJson` (#9) since `--metadata` crosses the
+    identical PowerShell↔native-exe boundary. Set `AntiIdleKeepAlive: false` to opt out.
 
 ## Conventions
 
@@ -117,8 +123,8 @@ Everything here shipped during the go-public pass. An agent working on this repo
 The **canonical, user-facing roadmap now lives in the README** ([Roadmap](README.md#roadmap)) — keep
 the two roughly in sync when scope changes. Agent-facing snapshot:
 
-**Shipped:** CI, linting, gitleaks secret scanning, multi-AD sweep + `Region` pinning, `v1.0.0`,
-branch protection, Dependabot, `SECURITY.md`.
+**Shipped:** CI, linting, gitleaks secret scanning, multi-AD sweep + `Region` pinning,
+anti-idle keep-alive (`AntiIdleKeepAlive`), `v1.0.0`, branch protection, Dependabot, `SECURITY.md`.
 
 **Open (highest-value first):**
 
