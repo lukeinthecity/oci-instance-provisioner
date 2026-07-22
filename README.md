@@ -77,6 +77,7 @@ notepad .\config.json
 | `Ocpus` / `MemoryInGBs` | ⬜    | Flex shape sizing. Defaults `4` / `24` (full free allocation).             | — |
 | `DisplayName`        | ⬜       | Instance display name. Default `oci-free-arm-instance`.                      | — |
 | `AssignPublicIp`     | ⬜       | Whether to assign a public IP. Default `true`.                              | — |
+| `AntiIdleKeepAlive`  | ⬜       | Bakes a cloud-init cron job into the launch that briefly burns one core every 6h, so Oracle's idle-instance reclamation never sees a genuinely idle box. Default `true`; set `false` to opt out. | — |
 | `NtfyServer`         | ⬜       | ntfy base URL. Default `https://ntfy.sh`. Override to self-host.            | — |
 | `BaseDelaySeconds`   | ⬜       | Base backoff between retries. Default `60`.                                 | — |
 | `JitterSeconds`      | ⬜       | Max random jitter added to the base delay. Default `30`.                    | — |
@@ -266,6 +267,7 @@ Where the project has been and where it's going, roughly highest-value first. Ev
 - [x] **Linting** — `PSScriptAnalyzer` runs in CI, findings kept clean.
 - [x] **Secret scanning** — gitleaks scans the full history on every push/PR, as a backstop to `.gitignore`.
 - [x] **Multi-AD fallback** — `AvailabilityDomain` takes a list and the loop sweeps every AD each cycle; `Region` can be pinned.
+- [x] **Anti-idle keep-alive** — cloud-init cron baked into the launch so Oracle's idle-instance reclamation never sees a genuinely idle box (opt-out via `AntiIdleKeepAlive: false`).
 - [x] **v1.0.0** — first tagged release.
 
 **Planned**

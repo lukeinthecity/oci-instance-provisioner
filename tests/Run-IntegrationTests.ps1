@@ -52,12 +52,23 @@ function New-SuccessOci([string]$Dir) {
     # --shape-config survived the PowerShell -> native-exe boundary as real JSON, so a
     # regression in quote-escaping makes this stub exit 1 just like the real CLI does.
     @'
-import sys, json
+import sys, json, base64
 a = sys.argv[1:]
 try:
     json.loads(a[a.index("--shape-config") + 1])
 except Exception:
     sys.exit(3)
+# --metadata is optional (anti-idle keep-alive can be disabled); only validate when
+# present. Same native-exe quote-escaping boundary as --shape-config, so this is an
+# identical regression guard: confirm it survived as real JSON AND that the
+# base64-encoded user_data decodes back to the cloud-init content we expect.
+if "--metadata" in a:
+    try:
+        meta = json.loads(a[a.index("--metadata") + 1])
+        decoded = base64.b64decode(meta["user_data"]).decode("utf-8")
+        assert "cloud-config" in decoded
+    except Exception:
+        sys.exit(4)
 sys.exit(0)
 '@ | Set-Content -Path (Join-Path $Dir 'validate_shape.py') -Encoding ASCII
     @'
@@ -68,7 +79,7 @@ where python >nul 2>nul
 if errorlevel 1 goto emit
 python "%~dp0validate_shape.py" %*
 if errorlevel 1 (
-  echo ServiceError: Parameter 'shape_config' must be in JSON format. 1>&2
+  echo ServiceError: launch argument failed validation ^(shape_config or metadata^). 1>&2
   exit /b 1
 )
 :emit
@@ -269,6 +280,37 @@ try {
     Assert ($ociArgs -match 'AD-1')                  "tried AD-1"
     Assert ($ociArgs -match 'AD-2')                  "tried AD-2 (no delay after AD-1's miss)"
     Assert ($ociArgs -match 'AD-3')                  "tried AD-3 (where capacity was) in the same sweep"
+
+    # --- Scenario 10: anti-idle keep-alive is ON by default => --metadata passed ---
+    Write-Host "`n[10] Anti-idle keep-alive (default: enabled)"
+    $d = New-TestDir '10-antiidle-default'
+    New-SuccessOci $d; New-Key $d
+    New-ValidConfig -Dir $d -NtfyServer 'http://127.0.0.1:1'   # no AntiIdleKeepAlive key => default true
+    $r = Invoke-Provisioner $d
+    $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
+    Assert ($r.ExitCode -eq 0)                                   "exits 0"
+    Assert ($r.Out -match 'Anti-idle keep-alive: enabled')       "logs keep-alive as enabled"
+    Assert ($ociArgs -match '--metadata')                        "passed --metadata to the CLI"
+
+    # --- Scenario 11: AntiIdleKeepAlive: false => no --metadata, opt-out respected ---
+    Write-Host "`n[11] Anti-idle keep-alive (explicitly disabled)"
+    $d = New-TestDir '11-antiidle-disabled'
+    New-SuccessOci $d; New-Key $d
+    ([ordered]@{
+        CompartmentId      = 'ocid1.tenancy.oc1.aaaareal'
+        SubnetId           = 'ocid1.subnet.oc1.iad.aaaareal'
+        ImageId            = 'ocid1.image.oc1.iad.aaaareal'
+        AvailabilityDomain = 'abCD:US-ASHBURN-AD-1'
+        SshKeyPath         = (Join-Path $d 'key.pub')
+        NtfyTopic          = 'hermetic-test-topic'
+        NtfyServer         = 'http://127.0.0.1:1'
+        AntiIdleKeepAlive  = $false
+    } | ConvertTo-Json) | Set-Content -Path (Join-Path $d 'config.json') -Encoding UTF8
+    $r = Invoke-Provisioner $d
+    $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
+    Assert ($r.ExitCode -eq 0)                                   "exits 0"
+    Assert ($r.Out -match 'Anti-idle keep-alive: disabled')      "logs keep-alive as disabled"
+    Assert ($ociArgs -notmatch '--metadata')                     "did NOT pass --metadata (opt-out respected)"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

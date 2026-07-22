@@ -204,6 +204,33 @@ $SuccessMarkerPath = Get-ConfigValue -Name 'SuccessMarkerPath' -Default (Join-Pa
 $ShapeConfigJson = (@{ ocpus = $Ocpus; memoryInGBs = $MemoryInGBs } | ConvertTo-Json -Compress) -replace '"', '\"'
 
 # ==============================================================================
+#  REGION: Anti-idle keep-alive (optional, on by default)
+#  Oracle can reclaim a genuinely idle Always Free instance (see "Post-acquisition
+#  risks" in docs/TEST-FLIGHT-NOTES.md). Baked into the launch's cloud-init user_data
+#  so it self-maintains with no ongoing dependency on this host: a low-frequency cron
+#  job burns one core briefly to keep CPU utilization signals non-zero. The API
+#  requires user_data to be base64-encoded; --metadata takes it as JSON, so the same
+#  native-exe quote-escaping gotcha as --shape-config above applies here too.
+# ==============================================================================
+$AntiIdleKeepAliveEnabled = [bool](Get-ConfigValue -Name 'AntiIdleKeepAlive' -Default $true)
+$MetadataJson = $null
+if ($AntiIdleKeepAliveEnabled) {
+    $CloudInitYaml = @"
+#cloud-config
+write_files:
+  - path: /etc/cron.d/oci-anti-idle
+    permissions: '0644'
+    content: |
+      # Provisioned by oci-instance-provisioner to avoid Oracle's Always Free
+      # idle-instance reclamation. Burns one core briefly every 6 hours so CPU
+      # utilization never reads as genuinely idle. Safe to remove or edit.
+      0 */6 * * * root timeout 120 sh -c 'while true; do :; done'
+"@
+    $UserDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($CloudInitYaml))
+    $MetadataJson = (@{ user_data = $UserDataB64 } | ConvertTo-Json -Compress) -replace '"', '\"'
+}
+
+# ==============================================================================
 #  REGION: Idempotency gate
 #  This loop exits on the FIRST success, but a Scheduled Task re-launches it at every
 #  startup. Without a guard, each reboot would attempt to provision ANOTHER instance
@@ -279,6 +306,7 @@ Write-Log -Path $LogPath -Level INFO -Message '=================================
 Write-Log -Path $LogPath -Level INFO -Message 'OCI Always Free provisioning engine started.'
 Write-Log -Path $LogPath -Level INFO -Message ("Shape: {0} ({1} OCPU / {2} GB) | AD(s): {3}" -f $Shape, $Ocpus, $MemoryInGBs, ($AvailabilityDomains -join ', '))
 Write-Log -Path $LogPath -Level INFO -Message ("Backoff: {0}s base + 0-{1}s jitter | Log: {2}" -f $BaseDelay, $JitterRange, $LogPath)
+Write-Log -Path $LogPath -Level INFO -Message ("Anti-idle keep-alive: {0}" -f $(if ($AntiIdleKeepAliveEnabled) { 'enabled (cloud-init cron every 6h)' } else { 'disabled' }))
 Write-Log -Path $LogPath -Level INFO -Message '================================================================'
 
 $Attempt  = 0
@@ -316,6 +344,7 @@ while (-not $launched) {
                 '--assign-public-ip',      ($AssignPublicIp.ToString().ToLower()),
                 '--ssh-authorized-keys-file', $Config.SshKeyPath
             )
+            if ($MetadataJson) { $LaunchArgs += @('--metadata', $MetadataJson) }
 
             # Capture stdout + stderr together for the log. Two subtle-but-critical details:
             #  1. We relax $ErrorActionPreference to 'Continue' inside this child scope. With the
