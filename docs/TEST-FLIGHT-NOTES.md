@@ -145,6 +145,30 @@ a human was running it against the live remote and reading the output — the bu
 
 ---
 
+## Post-acquisition risks (community-sourced, not yet exercised here)
+
+Two risks distinct from "Out of host capacity" — these only bite *after* an instance has landed.
+Gen 1 hasn't hit either yet, since no instance has landed during the live test flight. Sourced
+from other operators' experience (r/oraclecloud's ["Resolving Oracle Cloud 'Out of Capacity'
+issue"](https://www.reddit.com/r/oraclecloud/comments/on2e25/) thread), not from this project's
+own live tenancy — treat as a documented risk to design around, not a confirmed local finding.
+
+- **Stopping the instance can lose it.** Oracle un-reserves an Always Free instance's capacity a
+  few hours after shutdown; restarting can hit the *same* "out of host capacity" error — on an
+  instance you already had. Multiple operators learned this the hard way. If reconfiguration ever
+  requires a stop, take a boot volume backup first and be prepared to terminate + recreate rather
+  than stop/start, and accept that a recreate means re-fighting for capacity.
+- **Genuinely idle instances can be reclaimed.** Oracle's Always Free reclamation policy flags
+  compute instances that stay near-zero on CPU, network, and memory utilization for an extended
+  period (thresholds aren't published precisely and can change — verify against Oracle's current
+  docs rather than trusting a fixed number here). The community's low-effort mitigation is a
+  periodic "dummy load" cron job on the instance that keeps utilization signals non-zero. Gen 1's
+  job currently ends at a successful launch (config → preflight → retry/launch → validate →
+  notify, then exit) — it runs nothing on the instance afterward. See the roadmap for a planned
+  anti-idle keep-alive baked into the launch's cloud-init.
+
+---
+
 ## Where Gen 1 stands
 
 Running headless as a Scheduled Task, sweeping all configured Availability Domains each cycle,
