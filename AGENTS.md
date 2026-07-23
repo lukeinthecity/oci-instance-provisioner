@@ -84,6 +84,17 @@ pass. Preserve them:
     `--metadata`) that briefly burns one core every 6h so utilization never reads as idle. Reuses
     the same native-exe quote-escaping as `$ShapeConfigJson` (#9) since `--metadata` crosses the
     identical PowerShell↔native-exe boundary. Set `AntiIdleKeepAlive: false` to opt out.
+13. **Wait-for-RUNNING (`WaitForRunning`, default `false`) — build the full arg array, splat
+    ONCE.** After a confirmed launch, the instance OCID is regexed out of `$Response`, then
+    `oci compute instance get --wait-for-state RUNNING` and `oci compute instance list-vnics`
+    resolve the public IP (regexed out of the VNIC JSON, not via a JMESPath `--query` — its
+    inner quotes would hit the same stripping trap as #9). Splatting a second array (e.g.
+    `@regionArgs`) into the MIDDLE of a native call silently drops everything after it, so
+    `--region` is folded into one full array (`$GetArgs`/`$VnicArgs`) and splatted once — same
+    shape as `$LaunchArgs`. The whole wait/IP block has its OWN inner `try/catch`: without it, an
+    unexpected exception here would escape to the launch-attempt's outer catch and get
+    misclassified as a *launch* failure, potentially retrying or aborting after the instance was
+    already successfully provisioned. Best-effort throughout — never undoes a confirmed success.
 
 ## Conventions
 
@@ -130,11 +141,11 @@ The **canonical, user-facing roadmap now lives in the README** ([Roadmap](README
 the two roughly in sync when scope changes. Agent-facing snapshot:
 
 **Shipped:** CI, linting, gitleaks secret scanning, multi-AD sweep + `Region` pinning,
-anti-idle keep-alive (`AntiIdleKeepAlive`), `v1.0.0`, branch protection, Dependabot, `SECURITY.md`.
+anti-idle keep-alive (`AntiIdleKeepAlive`), `v1.0.0`, branch protection, Dependabot, `SECURITY.md`,
+wait-for-RUNNING + public IP (`WaitForRunning`).
 
 **Open (highest-value first):**
 
-- [ ] **Wait-for-RUNNING**: `--wait-for-state` and surface the public IP in the log/push.
 - [ ] **Cross-region rotation**: sweep regions, not just ADs within one.
 - [ ] **Cross-platform**: a `pwsh` + cron path for Linux/macOS users.
 - [ ] **Pester**: optionally migrate the integration suite to Pester once time allows.
