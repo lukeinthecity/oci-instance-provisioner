@@ -68,7 +68,13 @@ pass. Preserve them:
    `oci` in the tests validates this via python so it can't silently regress.
 10. **Permanent vs transient errors.** The loop only retries genuine capacity/throttle/5xx
     errors; auth/not-found/quota/invalid-request abort fast via `Exit-Fatal` with the real CLI
-    message (so a misconfig can't masquerade as an endless "capacity" wait).
+    message (so a misconfig can't masquerade as an endless "capacity" wait). A third bucket,
+    checked first: a CLI **usage/argument-parsing** error (Click's `Usage: oci ... / Error: ...`
+    shape) means the CLI rejected our own invocation before the call ever reached Oracle — always
+    a client-side bug or stale script, never capacity, never worth retrying. See
+    `docs/TEST-FLIGHT-NOTES.md` live-only bug #6 for how silently swallowing this class of error
+    into "unclassified — will retry" cost weeks of a live hunt that was never actually checking
+    capacity.
 11. **Multi-AD sweep, never parallel.** `AvailabilityDomain` may be a string or a list; the
     loop tries each AD back-to-back per cycle and stops on the first success. Do NOT parallelize
     — concurrent successes would provision multiple instances and exceed the free allocation.

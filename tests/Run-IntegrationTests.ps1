@@ -106,6 +106,19 @@ echo ServiceError: NotAuthorizedOrNotFound. Authorization failed or requested re
 exit /b 1
 '@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
 }
+function New-CliUsageErrorOci([string]$Dir) {
+    # Simulates the real-world bug this scenario guards against: a stale/buggy script splices
+    # an entire multi-AD array into a single --availability-domain argument, and the OCI CLI
+    # (a Click app) rejects it as a usage error BEFORE ever making an API call. The script must
+    # treat this as fatal, not as an unclassified "will retry" failure.
+    @'
+@echo off
+echo oci-was-called>> "%~dp0oci_called.txt"
+echo Usage: oci compute instance launch [OPTIONS] 1>&2
+echo Error: Got unexpected extra arguments (abCD:US-ASHBURN-AD-2 abCD:US-ASHBURN-AD-3) 1>&2
+exit /b 2
+'@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
+}
 function New-AdSelectiveOci([string]$Dir) {
     # Capacity ONLY in AD-3: fails "Out of host capacity" for AD-1/AD-2, succeeds for AD-3.
     # Records each invocation's args so the test can confirm all three ADs were swept.
@@ -311,6 +324,17 @@ try {
     Assert ($r.ExitCode -eq 0)                                   "exits 0"
     Assert ($r.Out -match 'Anti-idle keep-alive: disabled')      "logs keep-alive as disabled"
     Assert ($ociArgs -notmatch '--metadata')                     "did NOT pass --metadata (opt-out respected)"
+
+    # --- Scenario 12: CLI usage/argument-parsing error => abort fast, do NOT loop forever ---
+    Write-Host "`n[12] CLI usage error (stale script mis-building --availability-domain)"
+    $d = New-TestDir '12-cli-usage-error'
+    New-CliUsageErrorOci $d; New-Key $d; New-ValidConfig -Dir $d -BaseDelay 1 -Jitter 0
+    $r = Invoke-Provisioner $d
+    Assert ($r.ExitCode -eq 1)                                   "exits 1 (does not loop forever)"
+    Assert ($r.Out -match 'usage/argument-parsing error')        "labels it a CLI usage error, not capacity"
+    Assert ($r.Out -match 'Got unexpected extra arguments')      "surfaces the real CLI error"
+    Assert ($r.Out -notmatch 'Backing off')                      "does NOT enter the backoff loop"
+    Assert ($r.Out -notmatch 'unclassified')                     "is NOT swallowed by the generic unclassified fallback"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

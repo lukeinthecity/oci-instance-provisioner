@@ -86,6 +86,32 @@ a human was running it against the live remote and reading the output — the bu
   push.** That's the payoff of test-before-ship — the cheap feedback loop catching what the
   expensive one (a slow expedition cycle) would have.
 
+### 6. Stale checkout silently ran a pre-multi-AD build for weeks — every attempt failed client-side
+- **Symptom:** 1,345 consecutive attempts, all "no hit," logged as generic
+  `Capacity/transient error` with no per-AD label. The raw CLI output (only visible on close
+  inspection) was `Usage: oci compute instance launch [OPTIONS] / Error: Got unexpected extra
+  arguments (<AD-2> <AD-3>)` — a Click usage error, not a service response.
+- **Root cause:** two things compounding. (1) The box's checkout predated the multi-AD sweep
+  feature — evidenced by the missing `[AD]` label the current code always prints — so with a
+  3-element `AvailabilityDomain` array in `config.json`, the old code spliced all three strings
+  into a single `--availability-domain` argument instead of looping one-call-per-AD. The CLI
+  (a Click app) consumed the first AD as the flag's value and rejected the other two as
+  unexpected positional arguments — **a client-side parse failure that never reached Oracle.**
+  Every one of the 1,345 attempts failed the identical way without ever checking real capacity.
+  (2) The classifier had no bucket for "CLI usage error," so it fell into the generic
+  `unclassified — will retry` path and looped forever instead of failing loudly. (1) is exactly
+  the `git pull` "Already up to date" trap documented under Deployment gotchas below — a
+  mistracked branch leaves stale code running indefinitely with no visible warning.
+- **Fix:** `git fetch origin && git reset --hard origin/main` (not `git pull`) picked up the
+  current multi-AD code. Separately, the classifier now checks for Click's `Usage: oci ... /
+  Error: ...` shape *first*, before the permanent/transient buckets, and treats it as fatal —
+  see gotcha #10 in `AGENTS.md`.
+- **Lesson:** an "unclassified, will retry" fallback is a trap disguised as a safety net — it
+  guarantees an unrecognized *permanent* failure looks identical to a *transient* one forever.
+  Every failure bucket needs an explicit, opinionated home; "when in doubt, retry" quietly
+  converts a five-minute bug into a five-week one. Confirming a script is *actually current* on
+  a remote box (not just "not obviously broken") is as important as any code fix.
+
 ---
 
 ## Reading OCI's error language

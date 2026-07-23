@@ -417,8 +417,32 @@ $($Response.Trim())
             # expensive, undiagnosable failure mode on a remote, always-on PC.
             $rawResponse = if ($Response) { ($Response.Trim() -replace '\s+', ' ') } else { '' }
 
+            # A CLI usage/argument-parsing error (Click's "Usage: oci ... / Error: ..." shape)
+            # means the CLI rejected our OWN invocation before the call ever reached Oracle —
+            # e.g. a stale script version mis-building --availability-domain. It is a client-side
+            # bug, never a capacity signal, and retrying repeats the exact same failure forever
+            # without ever checking real capacity. Check this BEFORE the other signatures so it
+            # can never be swallowed by the generic "unclassified - will retry" fallback below.
+            $cliUsageSignatures = 'Usage: oci .*\[OPTIONS\]|Got unexpected extra arguments|No such option|Missing option|Invalid value for'
             $permanentSignatures = 'NotAuthorizedOrNotFound|NotAuthenticated|NotAuthorized|is not authorized|LimitExceeded|QuotaExceeded|service limit|CannotParseRequest|InvalidParameter|MissingParameter|does not exist'
             $transientSignatures = 'Out of host capacity|OutOfCapacity|OutOfHostCapacity|TooManyRequests|throttl|Service.*Unavailable|InternalServerError|timed out|timeout'
+
+            if ($rawResponse -match $cliUsageSignatures) {
+                Write-Log -Path $LogPath -Level ERROR -Message 'The OCI CLI rejected this script''s own invocation (a usage/argument-parsing error) - this is NOT a capacity or config problem:'
+                Write-Log -Path $LogPath -Level ERROR -Message $rawResponse
+                Exit-Fatal @"
+Provisioning aborted: the OCI CLI could not parse the arguments this script built for it.
+This is a CLIENT-SIDE bug or a stale script version — it will NEVER resolve by retrying, and
+every attempt from here on would fail the exact same way without ever reaching Oracle. Common causes:
+  - You're running an outdated copy of OciProvisioner.ps1. Run 'git fetch origin' then
+    'git reset --hard origin/main' (NOT plain 'git pull', which can silently no-op on a
+    mistracked branch — see docs/TEST-FLIGHT-NOTES.md) and restart the process/Scheduled Task.
+  - If the script IS current, this is a real bug — please open an issue with the raw output below.
+
+Raw CLI output:
+$rawResponse
+"@
+            }
 
             if ($rawResponse -match $permanentSignatures -and $rawResponse -notmatch $transientSignatures) {
                 Write-Log -Path $LogPath -Level ERROR -Message 'Non-retryable error from the OCI CLI - this will NOT resolve by waiting:'
