@@ -154,7 +154,8 @@ if ($MissingKeys) {
 # ==============================================================================
 #  REGION: Optional / defaulted settings
 #  Instance shape and backoff timing are tunable but optional — fall back to sane
-#  defaults (the full Always Free ARM allocation: 4 OCPUs / 24 GB) when omitted.
+#  defaults (the current Always Free ARM allocation: 2 OCPUs / 12 GB) when omitted.
+#  Oracle lowered this from 4 OCPU/24 GB in 2026 — see docs/TEST-FLIGHT-NOTES.md.
 # ==============================================================================
 function Get-ConfigValue {
     param([string]$Name, $Default)
@@ -165,8 +166,8 @@ function Get-ConfigValue {
 }
 
 $Shape          = Get-ConfigValue -Name 'Shape'          -Default 'VM.Standard.A1.Flex'
-$Ocpus          = Get-ConfigValue -Name 'Ocpus'          -Default 4
-$MemoryInGBs    = Get-ConfigValue -Name 'MemoryInGBs'    -Default 24
+$Ocpus          = Get-ConfigValue -Name 'Ocpus'          -Default 2
+$MemoryInGBs    = Get-ConfigValue -Name 'MemoryInGBs'    -Default 12
 $DisplayName    = Get-ConfigValue -Name 'DisplayName'    -Default 'oci-free-arm-instance'
 $AssignPublicIp = Get-ConfigValue -Name 'AssignPublicIp' -Default $true
 $BaseDelay      = [int](Get-ConfigValue -Name 'BaseDelaySeconds' -Default 60)
@@ -318,7 +319,7 @@ while (-not $launched) {
     # Capacity appears in different ADs at different moments, so we poll them all each cycle and
     # stop the instant one yields an instance. We deliberately do NOT fire them in parallel:
     # two simultaneous successes would provision two instances and blow the Always Free
-    # 4 OCPU / 24 GB cap. (With a single AD configured, this is just a one-element sweep.)
+    # 2 OCPU / 12 GB cap. (With a single AD configured, this is just a one-element sweep.)
     foreach ($ad in $AvailabilityDomains) {
         # Initialize so the catch block can safely inspect it even if the CLI call itself
         # raises a PowerShell-terminating error before assignment (StrictMode safety).
@@ -426,7 +427,7 @@ $($Response.Trim())
 Provisioning aborted: OCI returned a permanent error (auth / not-found / quota / invalid request).
 Retrying will not help — fix the underlying configuration and re-run. Common causes:
   - AvailabilityDomain, Region, or the OCIDs point at the wrong tenancy/region.
-  - You are already at the Always Free A1 limit (4 OCPU / 24 GB per tenancy) — terminate the
+  - You are already at the Always Free A1 limit (2 OCPU / 12 GB per tenancy) — terminate the
     existing instance, or lower Ocpus/MemoryInGBs in config.json.
 
 Raw CLI output:

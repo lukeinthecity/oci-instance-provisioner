@@ -118,7 +118,7 @@ a human was running it against the live remote and reading the output — the bu
   closing the terminal *and* reboots, and runs without an interactive login. `Start-Job` does
   **not** detach — it dies with the session.
 - **Never run two provisioners at once.** Two concurrent runs could both land capacity and
-  provision *two* instances, blowing the Always Free 4 OCPU / 24 GB cap. Stop the foreground run
+  provision *two* instances, blowing the Always Free 2 OCPU / 12 GB cap. Stop the foreground run
   *before* starting the task. (Same reason the AD sweep is sequential, never parallel.)
 - **`Ready` ≠ `Running`.** Registering a task installs it; it doesn't start it. With an at-startup
   trigger it won't run until a reboot unless you `Start-ScheduledTask` it manually the first time.
@@ -127,6 +127,14 @@ a human was running it against the live remote and reading the output — the bu
   `(Get-ScheduledTask -TaskName '...').State` and watch for *new* log lines with fresh timestamps.
 - **Verify reboot survival by actually rebooting once.** "It should restart" is theory until you've
   power-cycled the box and watched the task come back `Running` with a post-reboot log banner.
+- **The Always Free A1 cap itself isn't stable — Oracle can and did lower it.** Console notice, 2026:
+  the Ampere A1 allocation dropped from 4 OCPU/24 GB to 2 OCPU/12 GB. A hardcoded default
+  (`$Ocpus`/`$MemoryInGBs` in `OciProvisioner.ps1`, `config.json.example`) silently goes stale when
+  that happens — it doesn't fail loudly, it just requests more than Oracle will give you for free.
+  The blast radius is worse on a **Pay As You Go** account than a Free Trial one: a trial account is
+  capped by its trial credits, but PAYG has no spending governor, so an over-cap launch can succeed
+  and quietly bill you instead of erroring. Re-check Oracle's current Always Free page after any
+  "allocation changed" notice and update the defaults to match.
 
 ---
 

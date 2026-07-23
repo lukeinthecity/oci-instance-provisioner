@@ -12,11 +12,11 @@
   "_region": "STRONGLY recommended. Must match the region of your Subnet/Image/AD (e.g. us-ashburn-1). If blank, the CLI uses the region from ~/.oci/config, which can silently mismatch and loop forever on a 404.",
   "Region": "us-ashburn-1",
 
-  "_optional": "Everything below is optional. Defaults shown reflect the full Always Free ARM allocation (4 OCPU / 24 GB). Remove any line to accept its default.",
+  "_optional": "Everything below is optional. Defaults shown reflect the current Always Free ARM allocation (2 OCPU / 12 GB — Oracle lowered this from 4/24 in 2026). Remove any line to accept its default.",
 
   "Shape": "VM.Standard.A1.Flex",
-  "Ocpus": 4,
-  "MemoryInGBs": 24,
+  "Ocpus": 2,
+  "MemoryInGBs": 12,
   "DisplayName": "oci-free-arm-instance",
   "AssignPublicIp": true,
 
