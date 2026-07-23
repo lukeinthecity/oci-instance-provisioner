@@ -12,7 +12,8 @@
 ## Why this exists
 
 Oracle Cloud's [Always Free tier](https://www.oracle.com/cloud/free/) includes a genuinely
-generous ARM allocation (up to 4 OCPUs and 24 GB of RAM on `VM.Standard.A1.Flex`). The catch:
+generous ARM allocation (up to 2 OCPUs and 12 GB of RAM on `VM.Standard.A1.Flex` — Oracle
+lowered this from 4/24 in 2026). The catch:
 the popular regions are almost always **"Out of host capacity"**, so a one-shot `launch` call
 usually fails. Capacity frees up unpredictably — often for just a few seconds at a time.
 
@@ -74,7 +75,7 @@ notepad .\config.json
 | `NtfyTopic`          | ✅       | A unique ntfy.sh topic string. Subscribe to it in the ntfy app first.       | You pick it — make it long/random so it stays private |
 | `Region`             | ⬜†      | Target region (e.g. `us-ashburn-1`). Must match your Subnet/Image/AD. If blank, the CLI's `~/.oci/config` region is used. | `oci iam region-subscription list` |
 | `Shape`              | ⬜       | Compute shape. Default `VM.Standard.A1.Flex`.                               | — |
-| `Ocpus` / `MemoryInGBs` | ⬜    | Flex shape sizing. Defaults `4` / `24` (full free allocation).             | — |
+| `Ocpus` / `MemoryInGBs` | ⬜    | Flex shape sizing. Defaults `2` / `12` (full free allocation).             | — |
 | `DisplayName`        | ⬜       | Instance display name. Default `oci-free-arm-instance`.                      | — |
 | `AssignPublicIp`     | ⬜       | Whether to assign a public IP. Default `true`.                              | — |
 | `AntiIdleKeepAlive`  | ⬜       | Bakes a cloud-init cron job into the launch that briefly burns one core every 6h, so Oracle's idle-instance reclamation never sees a genuinely idle box. Default `true`; set `false` to opt out. | — |
@@ -240,7 +241,7 @@ so it drops cleanly into CI.
 | `AvailabilityDomain ... is missing its tenancy prefix` | Use the **full** AD name (e.g. `Uocm:US-ASHBURN-AD-1`) from `oci iam availability-domain list`. |
 | Loops forever with `Out of host capacity` | Working as intended — capacity is genuinely unavailable. Leave it running. |
 | **Aborts** with a "permanent error" (auth / not-found / quota / invalid request) | Not a capacity issue — the script now fails fast and prints the real CLI error. Fix the config and re-run. |
-| Aborts citing the Always Free A1 limit | You already have an A1 instance (cap is 4 OCPU / 24 GB per tenancy). Terminate it, or lower `Ocpus`/`MemoryInGBs`. |
+| Aborts citing the Always Free A1 limit | You already have an A1 instance (cap is 2 OCPU / 12 GB per tenancy). Terminate it, or lower `Ocpus`/`MemoryInGBs`. |
 | Repeated 404s / `NotAuthorizedOrNotFound` | Region mismatch — set `Region` in `config.json` to match your Subnet/Image/AD, and run `oci setup config` to confirm auth. |
 | Auth errors **only** under the SYSTEM Scheduled Task | SYSTEM can't see your user's `~/.oci/config`. Set `OciCliConfigPath` in `config.json`, or register with `-RunAsCurrentUser`. |
 | No ntfy push but instance created | Confirm you subscribed to the **same** topic string; check the log for the warning line. |
