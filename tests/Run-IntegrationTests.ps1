@@ -74,7 +74,7 @@ sys.exit(0)
     @'
 @echo off
 echo oci-was-called>> "%~dp0oci_called.txt"
-echo %*>> "%~dp0oci_args.txt"
+echo %* >> "%~dp0oci_args.txt"
 where python >nul 2>nul
 if errorlevel 1 goto emit
 python "%~dp0validate_shape.py" %*
@@ -124,11 +124,35 @@ function New-AdSelectiveOci([string]$Dir) {
     # Records each invocation's args so the test can confirm all three ADs were swept.
     @'
 @echo off
-echo %*>> "%~dp0oci_args.txt"
+echo %* >> "%~dp0oci_args.txt"
 echo %*| findstr /C:"AD-3" >nul
 if errorlevel 1 (
   echo ServiceError: Out of host capacity. 1>&2
   exit /b 1
+)
+echo {"data": {"id": "ocid1.instance.oc1.iad.aaaaexamplefake"}}
+exit /b 0
+'@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
+}
+function New-WaitForRunningOci([string]$Dir) {
+    # Branches on subcommand: 'list-vnics' returns a VNIC with a public IP, 'instance get'
+    # (the --wait-for-state call) reports RUNNING, and anything else (the launch) returns the
+    # instance OCID. Lets the WaitForRunning path be exercised end-to-end with no Oracle and
+    # no real waiting. Records args with a SPACE before '>>': a trailing numeric argument
+    # (--max-wait-seconds 600) would otherwise make cmd parse '600>>file' as an file-descriptor
+    # redirect and silently drop the line - see the space-before-'>>' fix applied above.
+    @'
+@echo off
+echo %* >> "%~dp0oci_args.txt"
+echo %*| findstr /C:"list-vnics" >nul
+if not errorlevel 1 (
+  echo {"data": [{"public-ip": "203.0.113.42"}]}
+  exit /b 0
+)
+echo %*| findstr /C:"instance get" >nul
+if not errorlevel 1 (
+  echo {"data": {"lifecycle-state": "RUNNING"}}
+  exit /b 0
 )
 echo {"data": {"id": "ocid1.instance.oc1.iad.aaaaexamplefake"}}
 exit /b 0
@@ -335,6 +359,33 @@ try {
     Assert ($r.Out -match 'Got unexpected extra arguments')      "surfaces the real CLI error"
     Assert ($r.Out -notmatch 'Backing off')                      "does NOT enter the backoff loop"
     Assert ($r.Out -notmatch 'unclassified')                     "is NOT swallowed by the generic unclassified fallback"
+
+    # --- Scenario 13: WaitForRunning => waits for RUNNING and surfaces the public IP ---
+    Write-Host "`n[13] WaitForRunning (waits for RUNNING, resolves public IP)"
+    $d = New-TestDir '13-wait-for-running'
+    New-WaitForRunningOci $d; New-Key $d
+    ([ordered]@{
+        CompartmentId      = 'ocid1.tenancy.oc1.aaaareal'
+        SubnetId           = 'ocid1.subnet.oc1.iad.aaaareal'
+        ImageId            = 'ocid1.image.oc1.iad.aaaareal'
+        AvailabilityDomain = 'abCD:US-ASHBURN-AD-1'
+        SshKeyPath         = (Join-Path $d 'key.pub')
+        NtfyTopic          = 'hermetic-test-topic'
+        NtfyServer         = 'http://127.0.0.1:1'
+        Region             = 'us-ashburn-1'
+        WaitForRunning     = $true
+        WaitTimeoutSeconds = 5
+    } | ConvertTo-Json) | Set-Content -Path (Join-Path $d 'config.json') -Encoding UTF8
+    $r = Invoke-Provisioner $d
+    $ociArgs = if (Test-Path (Join-Path $d 'oci_args.txt')) { Get-Content (Join-Path $d 'oci_args.txt') -Raw } else { '' }
+    Assert ($r.ExitCode -eq 0)                                    "exits 0"
+    Assert ($r.Out -match 'Wait-for-RUNNING: enabled')            "logs wait-for-RUNNING as enabled"
+    Assert ($r.Out -match 'Instance secured')                     "secured an instance"
+    Assert ($ociArgs -match 'instance get')                       "queried instance get"
+    Assert ($ociArgs -match '--wait-for-state RUNNING')           "waited for the instance to reach RUNNING"
+    Assert ($ociArgs -match 'list-vnics')                         "queried the VNIC for the public IP"
+    Assert ($r.Out -match 'Public IP: 203\.0\.113\.42')           "surfaced the public IP in the log"
+    Assert ($r.Out -match 'notification failed')                  "ntfy still attempted (best-effort) despite closed port"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

@@ -232,6 +232,16 @@ write_files:
 }
 
 # ==============================================================================
+#  REGION: Wait-for-RUNNING (optional, off by default)
+#  A confirmed launch means OCI accepted the request; the instance is still
+#  provisioning. Opting in waits for it to reach RUNNING and resolves its public
+#  IP, so the log and the ntfy push can tell you exactly where to SSH. Off by
+#  default so the script keeps its fast exit-on-launch behavior unless asked.
+# ==============================================================================
+$WaitForRunning     = [bool](Get-ConfigValue -Name 'WaitForRunning' -Default $false)
+$WaitTimeoutSeconds = [int](Get-ConfigValue -Name 'WaitTimeoutSeconds' -Default 600)
+
+# ==============================================================================
 #  REGION: Idempotency gate
 #  This loop exits on the FIRST success, but a Scheduled Task re-launches it at every
 #  startup. Without a guard, each reboot would attempt to provision ANOTHER instance
@@ -308,6 +318,7 @@ Write-Log -Path $LogPath -Level INFO -Message 'OCI Always Free provisioning engi
 Write-Log -Path $LogPath -Level INFO -Message ("Shape: {0} ({1} OCPU / {2} GB) | AD(s): {3}" -f $Shape, $Ocpus, $MemoryInGBs, ($AvailabilityDomains -join ', '))
 Write-Log -Path $LogPath -Level INFO -Message ("Backoff: {0}s base + 0-{1}s jitter | Log: {2}" -f $BaseDelay, $JitterRange, $LogPath)
 Write-Log -Path $LogPath -Level INFO -Message ("Anti-idle keep-alive: {0}" -f $(if ($AntiIdleKeepAliveEnabled) { 'enabled (cloud-init cron every 6h)' } else { 'disabled' }))
+Write-Log -Path $LogPath -Level INFO -Message ("Wait-for-RUNNING: {0}" -f $(if ($WaitForRunning) { "enabled (timeout ${WaitTimeoutSeconds}s)" } else { 'disabled' }))
 Write-Log -Path $LogPath -Level INFO -Message '================================================================'
 
 $Attempt  = 0
@@ -375,6 +386,52 @@ while (-not $launched) {
             Write-Log -Path $LogPath -Level SUCCESS -Message '================================================================'
             Write-Log -Path $LogPath -Level INFO    -Message $Response.Trim()
 
+            # Optionally wait for RUNNING and resolve the public IP. Best-effort: the instance is
+            # already provisioned at this point, so a wait/lookup hiccup must NOT undo the success
+            # logged above or block the marker/notification that follow.
+            $publicIp = $null
+            if ($WaitForRunning) {
+                try {
+                    $instanceOcid = [regex]::Match($Response, 'ocid1\.instance\.oc1[a-z0-9\.\-]+').Value
+                    if (-not $instanceOcid) {
+                        Write-Log -Path $LogPath -Level WARN -Message "WaitForRunning is on, but the instance OCID could not be parsed from the launch response; skipping the wait/IP lookup."
+                    }
+                    else {
+                        Write-Log -Path $LogPath -Level INFO -Message "Waiting up to ${WaitTimeoutSeconds}s for $instanceOcid to reach RUNNING..."
+
+                        # Build the FULL argument array, then splat ONCE — matching $LaunchArgs
+                        # above. Splatting a second array (e.g. @regionArgs) into the MIDDLE of a
+                        # native call silently drops everything after it, so region is folded into
+                        # the same array instead of splatted separately.
+                        $GetArgs = @('compute', 'instance', 'get', '--instance-id', $instanceOcid)
+                        if ($Region) { $GetArgs += @('--region', $Region) }
+                        $GetArgs += @('--wait-for-state', 'RUNNING', '--max-wait-seconds', $WaitTimeoutSeconds)
+                        & {
+                            $ErrorActionPreference = 'Continue'
+                            & oci @GetArgs 2>&1 | ForEach-Object { "$_" }
+                        } | Out-Null
+
+                        # Resolve the public IP from the primary VNIC. Deliberately avoid a
+                        # JMESPath --query here: its inner quotes (data[0]."public-ip") would be
+                        # stripped crossing into the native exe - the same trap as --shape-config
+                        # (gotcha #9) - so the JSON is read as text and the address regexed out.
+                        $VnicArgs = @('compute', 'instance', 'list-vnics', '--instance-id', $instanceOcid)
+                        if ($Region) { $VnicArgs += @('--region', $Region) }
+                        $vnicOut = & {
+                            $ErrorActionPreference = 'Continue'
+                            & oci @VnicArgs 2>&1 | ForEach-Object { "$_" }
+                        } | Out-String
+                        $publicIp = [regex]::Match($vnicOut, '"public-ip"\s*:\s*"([0-9.]+)"').Groups[1].Value
+
+                        if ($publicIp) { Write-Log -Path $LogPath -Level SUCCESS -Message "Public IP: $publicIp" }
+                        else { Write-Log -Path $LogPath -Level WARN -Message "Instance is up, but its public IP could not be resolved yet - check the OCI console." }
+                    }
+                }
+                catch {
+                    Write-Log -Path $LogPath -Level WARN -Message "WaitForRunning step failed (instance is still provisioned): $($_.Exception.Message)"
+                }
+            }
+
             # Write the idempotency marker so a Scheduled Task won't re-provision on reboot.
             try {
                 Set-Content -LiteralPath $SuccessMarkerPath -Encoding UTF8 -Value @"
@@ -389,10 +446,15 @@ $($Response.Trim())
             # 🔔 NTFY PUSH NOTIFICATION (Refactoring Target #4)
             # Build the URI by interpolating the topic via a subexpression $(...) — no stray $.
             try {
+                $PushBody = if ($publicIp) {
+                    "Oracle Cloud ARM instance '$DisplayName' is up - public IP $publicIp"
+                } else {
+                    "Oracle Cloud ARM instance '$DisplayName' was successfully provisioned. Check your OCI console."
+                }
                 $NotificationParams = @{
                     Uri     = "$NtfyServer/$($Config.NtfyTopic)"
                     Method  = 'Post'
-                    Body    = "Oracle Cloud ARM instance '$DisplayName' was successfully provisioned. Check your OCI console."
+                    Body    = $PushBody
                     Headers = @{
                         'Title'    = 'OCI Instance Secured'
                         'Priority' = 'high'
