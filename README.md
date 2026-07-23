@@ -36,6 +36,7 @@ the instant it succeeds.
 - **Idempotent** — writes a success marker so a reboot won't accidentally provision a *second* instance.
 - **Durable logging** — writes a timestamped `provisioner.log` so headless runs are auditable.
 - **Fail-fast preflight** — missing CLI, config, or SSH key stops immediately instead of looping forever.
+- **Fatal errors are always logged, not just printed** — including config/JSON problems caught before the log file's normal settings are even read, so a failure under a headless Scheduled Task always leaves a trace.
 
 ## Prerequisites
 

@@ -212,6 +212,8 @@ try {
     Assert ($r.ExitCode -eq 1)                              "exits 1"
     Assert ($r.Out -match 'Configuration file not found')   "prints clean 'not found' guidance"
     Assert ($r.Out -notmatch 'CategoryInfo')                "no raw PowerShell error blob"
+    Assert ((Get-Content (Join-Path $d 'provisioner.log') -Raw) -match 'Configuration file not found') `
+        "ALSO logs the fatal error to file (not console-only) - critical under a headless Scheduled Task"
 
     # --- Scenario 2: placeholder config (the shipped example) => lists all keys ---
     Write-Host "`n[2] Placeholder config (config.json.example)"
@@ -386,6 +388,33 @@ try {
     Assert ($ociArgs -match 'list-vnics')                         "queried the VNIC for the public IP"
     Assert ($r.Out -match 'Public IP: 203\.0\.113\.42')           "surfaced the public IP in the log"
     Assert ($r.Out -match 'notification failed')                  "ntfy still attempted (best-effort) despite closed port"
+
+    # --- Scenario 14: malformed JSON => clean fatal exit, ALSO logged to file ---
+    # Reproduces a real incident: a missing comma between two keys in config.json produced a
+    # fatal error that was completely invisible under a headless Scheduled Task, because
+    # Exit-Fatal only ever wrote to the (nonexistent, for a hidden task) console. This is the
+    # earliest possible Exit-Fatal call site - before config.json is even successfully parsed,
+    # let alone before the normal $LogPath = Get-ConfigValue(...) resolution - so it specifically
+    # exercises the early deterministic $LogPath default that makes logging safe this early.
+    Write-Host "`n[14] Malformed JSON (missing comma) => fails fast AND logs to file"
+    $d = New-TestDir '14-malformed-json'
+    @'
+{
+  "CompartmentId": "ocid1.tenancy.oc1.aaaareal",
+  "SubnetId": "ocid1.subnet.oc1.iad.aaaareal",
+  "ImageId": "ocid1.image.oc1.iad.aaaareal",
+  "AvailabilityDomain": "abCD:US-ASHBURN-AD-1",
+  "SshKeyPath": "key.pub",
+  "NtfyTopic": "hermetic-test-topic",
+  "WaitTimeoutSeconds": 600
+  "DisplayName": "oci-free-arm-instance"
+}
+'@ | Set-Content -Path (Join-Path $d 'config.json') -Encoding UTF8
+    $r = Invoke-Provisioner $d
+    Assert ($r.ExitCode -eq 1)                                          "exits 1"
+    Assert ($r.Out -match 'could not be parsed as valid JSON')          "prints the JSON-parse fatal error"
+    Assert ((Get-Content (Join-Path $d 'provisioner.log') -Raw) -match 'could not be parsed as valid JSON') `
+        "ALSO logs it to file - this is the exact incident: previously invisible under a headless run"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue
