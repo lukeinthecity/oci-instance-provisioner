@@ -95,6 +95,17 @@ pass. Preserve them:
     unexpected exception here would escape to the launch-attempt's outer catch and get
     misclassified as a *launch* failure, potentially retrying or aborting after the instance was
     already successfully provisioned. Best-effort throughout — never undoes a confirmed success.
+14. **`Exit-Fatal` also logs to file — and `$LogPath` has a deterministic early default so this
+    never crashes under StrictMode.** A live incident: a config.json typo (missing comma) after
+    an edit produced a fatal error that was completely invisible under a headless Scheduled
+    Task, because `Exit-Fatal` only ever wrote to the console via `Write-Host`. The earliest
+    `Exit-Fatal` call sites (missing config file, invalid JSON, missing/placeholder keys) all
+    happen *before* the normal `$LogPath = Get-ConfigValue -Name 'LogPath' ...` resolution — so
+    `$LogPath` is set to the script-relative default (`$PSScriptRoot\provisioner.log`)
+    immediately after `$ConfigPath` is resolved, before the first possible `Exit-Fatal` call.
+    Without that early default, referencing `$LogPath` inside `Exit-Fatal` before it's ever been
+    assigned would itself throw under `Set-StrictMode -Version Latest` (a variable that's never
+    been set, not just empty). See `docs/TEST-FLIGHT-NOTES.md` for the full incident.
 
 ## Conventions
 

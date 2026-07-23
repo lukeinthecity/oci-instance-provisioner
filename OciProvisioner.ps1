@@ -59,6 +59,13 @@ function Exit-Fatal {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Message)
     Write-Host $Message -ForegroundColor Red
+    # Also write to the log, not just the console: under a headless Scheduled Task there is
+    # no console to see, so a config/preflight fatal error would otherwise be completely
+    # silent - the log's last entry would predate the failed run with no trace of why it
+    # failed. $LogPath is guaranteed to already hold at least the script-relative default by
+    # the time this can run (set immediately after $ConfigPath is resolved, before the first
+    # possible Exit-Fatal call), so this is always safe under Set-StrictMode -Version Latest.
+    Write-Log -Path $LogPath -Level ERROR -Message $Message
     exit 1
 }
 
@@ -105,6 +112,13 @@ function Write-Log {
 if (-not $ConfigPath) {
     $ConfigPath = Join-Path -Path $PSScriptRoot -ChildPath 'config.json'
 }
+
+# Deterministic early default so Exit-Fatal can always log, even for failures that happen
+# BEFORE config.json is successfully parsed (missing file, invalid JSON) - at that point we
+# can't yet read a custom LogPath override from config, so fall back to the same default the
+# script always uses. If config.json goes on to parse successfully, the real settings block
+# below re-resolves $LogPath from config (a custom override there takes over from here).
+$LogPath = Join-Path -Path $PSScriptRoot -ChildPath 'provisioner.log'
 
 # EVALUATION GATE: a missing config is a fatal, non-retryable setup error.
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {

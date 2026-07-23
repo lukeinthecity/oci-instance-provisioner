@@ -112,6 +112,34 @@ a human was running it against the live remote and reading the output — the bu
   converts a five-minute bug into a five-week one. Confirming a script is *actually current* on
   a remote box (not just "not obviously broken") is as important as any code fix.
 
+### 7. A config typo produced a fatal error with zero trace under the Scheduled Task
+- **Symptom:** after editing `config.json` (adding `WaitForRunning`) and restarting the
+  Scheduled Task, `(Get-ScheduledTaskInfo ...).LastTaskResult` showed `1` (a fatal exit) at a
+  timestamp minutes in the past — but `provisioner.log`'s last entry was from the *previous*,
+  unrelated run. The failure left **no trace anywhere** the log could show.
+- **Root cause:** the edit had dropped a comma between two keys (`"WaitTimeoutSeconds": 600`
+  followed directly by `"DisplayName": ...` with nothing between them), which is invalid JSON.
+  `Exit-Fatal` — the function every config/preflight fatal error routes through — only ever
+  called `Write-Host`, never `Write-Log`. That's invisible by design under a headless Scheduled
+  Task (no console attached), so the *exact class of error most likely right after a config
+  edit* was also the one class the log could never show. Confirmed by running the script
+  interactively (`.\OciProvisioner.ps1`), which surfaced the real message instantly: `config.json
+  could not be parsed as valid JSON: Invalid object passed in, ':' or '}' expected.`
+- **Fix:** `Exit-Fatal` now also calls `Write-Log`. The tricky part: the *earliest* possible
+  `Exit-Fatal` calls (missing config file, invalid JSON, missing/placeholder keys) all happen
+  **before** `$LogPath` is normally resolved from config — so referencing it that early would
+  itself throw under `Set-StrictMode -Version Latest` (an unset variable, not just an empty
+  one). Fixed by giving `$LogPath` a deterministic early default (the same
+  `$PSScriptRoot\provisioner.log` the script always falls back to) immediately after
+  `$ConfigPath` is resolved, before the first possible `Exit-Fatal` call. See gotcha #14 in
+  `AGENTS.md`.
+- **Lesson:** "we log everything" isn't true until you've verified the *specific function every
+  fatal path funnels through* actually does — a single missed helper can make an entire category
+  of failure invisible under exactly the deployment mode (headless, unattended) where visibility
+  matters most. When something is "clearly wrong but the log shows nothing," try running it
+  interactively before assuming the system is broken — the console often knows what the log
+  doesn't.
+
 ---
 
 ## Reading OCI's error language
