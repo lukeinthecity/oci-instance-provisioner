@@ -121,6 +121,11 @@ pass. Preserve them:
   this file: correlating it to the code lets an assistant skip re-deriving solved problems and not
   re-introduce them. Keep it secret-free (it ships public) and linked from the README. This is a
   **per-project best practice**, not specific to this repo — start one for every project.
+- **Also read [`agent-playbooks`](https://github.com/lukeinthecity/agent-playbooks)'s
+  `INCIDENT-LOG.md`** at the start of a session, alongside this file — it's a cross-session,
+  cross-repo log of novel or alarming situations from real work across this account's projects
+  (this repo's own live-only bug #6 and shape-limit incident are both in there, generalized).
+  Attach the repo (`add_repo` / `register_repo_root`) if it isn't already in session scope.
 
 ## CI, security & repo governance
 
