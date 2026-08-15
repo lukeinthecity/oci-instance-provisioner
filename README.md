@@ -72,7 +72,7 @@ notepad .\config.json
 | `SubnetId`           | ✅       | OCID of the subnet for the instance's VNIC.                                 | Console → Networking → VCN → Subnets |
 | `ImageId`            | ✅       | OCID of the OS image (e.g. an aarch64 Ubuntu/Oracle Linux build).           | `oci compute image list --compartment-id <id> --shape VM.Standard.A1.Flex` |
 | `AvailabilityDomain` | ✅       | **Full** AD name(s) incl. the tenancy prefix (e.g. `Uocm:US-ASHBURN-AD-1`) — bare `US-ASHBURN-AD-1` is rejected. A **single string** polls one AD; a **JSON array** sweeps several each cycle (see below). | `oci iam availability-domain list --compartment-id <id> --query "data[].name" --raw-output` |
-| `SshKeyPath`         | ✅       | Local path to your **public** key (`.pub`).                                 | e.g. `C:\Users\you\.ssh\id_ed25519.pub` |
+| `SshKeyPath`         | ✅       | Local path to your **public** key (`.pub`). Any absolute path works — it needn't be under your user profile. | e.g. `C:\Users\you\.ssh\id_ed25519.pub` |
 | `NtfyTopic`          | ✅       | A unique ntfy.sh topic string. Subscribe to it in the ntfy app first.       | You pick it — make it long/random so it stays private |
 | `Region`             | ⬜†      | Target region (e.g. `us-ashburn-1`). Must match your Subnet/Image/AD. If blank, the CLI's `~/.oci/config` region is used. | `oci iam region-subscription list` |
 | `Shape`              | ⬜       | Compute shape. Default `VM.Standard.A1.Flex`.                               | — |
@@ -85,13 +85,13 @@ notepad .\config.json
 | `NtfyServer`         | ⬜       | ntfy base URL. Default `https://ntfy.sh`. Override to self-host.            | — |
 | `BaseDelaySeconds`   | ⬜       | Base backoff between retries. Default `60`.                                 | — |
 | `JitterSeconds`      | ⬜       | Max random jitter added to the base delay. Default `30`.                    | — |
-| `OciCliConfigPath`   | ⬜       | Absolute path to your `~/.oci/config`. Only needed for **SYSTEM** runs (see below). | — |
+| `OciCliConfigPath`   | ⬜       | Absolute path to your OCI CLI `config` file. Needed whenever the CLI can't find it at the default `~/.oci/config` — for **SYSTEM** runs (see below), or if you keep `.oci` somewhere other than your user profile (see [Keeping `.oci` and `.ssh` next to the script](#keeping-oci-and-ssh-next-to-the-script)). | — |
 | `LogPath`            | ⬜       | Custom log file path. Default: `provisioner.log` next to the script.        | — |
 | `SuccessMarkerPath`  | ⬜       | Sentinel file written on success (enables idempotency). Default: `provisioner.success`. | — |
 
 > † `Region` is technically optional but **strongly recommended** — leaving it blank relies on your `~/.oci/config` default, and a region mismatch fails on every attempt.
 
-> `config.json`, `provisioner.log`, `provisioner.success`, and key files are all in `.gitignore` — they will never be committed.
+> `config.json`, `provisioner.log`, `provisioner.success`, key files, and the `.oci/` and `.ssh/` directories are all in `.gitignore` — they will never be committed.
 
 ### Polling one vs. multiple Availability Domains
 
@@ -171,6 +171,50 @@ To remove the task once you've got your instance:
 ```powershell
 Unregister-ScheduledTask -TaskName 'OCI-Instance-Provisioner' -Confirm:$false
 ```
+
+## Keeping `.oci` and `.ssh` next to the script
+
+The OCI CLI defaults to `~/.oci/config`, and most setup guides put your SSH keys in
+`~/.ssh`. Neither location is required — you can keep both directories alongside the
+script (e.g. `C:\Users\you\Workshop\oci-instance-provisioner\.oci\`) to keep everything
+for this tool in one place. Both are `.gitignore`d, so nothing gets committed.
+
+Three paths have to be updated together, and they live in **two different files** with
+**two different escaping rules**:
+
+1. **`config.json`** — point the CLI at the relocated config (JSON, so backslashes are
+   doubled):
+
+   ```json
+   "OciCliConfigPath": "C:\\Users\\you\\Workshop\\oci-instance-provisioner\\.oci\\config"
+   ```
+
+2. **`.oci\config` itself** — the `key_file` entry inside it is an absolute path to your
+   API private key, and moving the directory does *not* update it (INI, so single
+   backslashes):
+
+   ```ini
+   key_file = C:\Users\you\Workshop\oci-instance-provisioner\.oci\oci_api_key.pem
+   ```
+
+3. **`config.json`** — the SSH public key (JSON again, doubled backslashes):
+
+   ```json
+   "SshKeyPath": "C:\\Users\\you\\Workshop\\oci-instance-provisioner\\.ssh\\id_ed25519.pub"
+   ```
+
+> [!TIP]
+> Miss step 1 and the CLI silently falls back to `~/.oci/config`, so the error names the
+> *old* home-directory path even though you changed nothing there — e.g.
+> `Get-Acl : Cannot find path 'C:\Users\you\.oci\config'`. Miss step 2 and you get
+> `FileNotFoundError: ...oci_api_key.pem` even though `OciCliConfigPath` is correct, because
+> that path is read from inside the config file rather than from `config.json`.
+
+> [!NOTE]
+> Moving a private key between directories can change its inherited Windows ACLs. The OCI
+> CLI warns (and can refuse to run) if `oci_api_key.pem` is readable by more than your own
+> account — check with `Get-Acl .oci\oci_api_key.pem | Format-List` and tighten it with
+> `icacls` if extra principals appear.
 
 ## Notifications via ntfy.sh
 
@@ -252,6 +296,9 @@ so it drops cleanly into CI.
 | Aborts citing the Always Free A1 limit | You already have an A1 instance (cap is 2 OCPU / 12 GB per tenancy). Terminate it, or lower `Ocpus`/`MemoryInGBs`. |
 | Repeated 404s / `NotAuthorizedOrNotFound` | Region mismatch — set `Region` in `config.json` to match your Subnet/Image/AD, and run `oci setup config` to confirm auth. |
 | Auth errors **only** under the SYSTEM Scheduled Task | SYSTEM can't see your user's `~/.oci/config`. Set `OciCliConfigPath` in `config.json`, or register with `-RunAsCurrentUser`. |
+| `Get-Acl : Cannot find path '...\.oci\config'` after moving the folder | `OciCliConfigPath` isn't set, so the CLI fell back to the default `~/.oci/config`. See [Keeping `.oci` and `.ssh` next to the script](#keeping-oci-and-ssh-next-to-the-script). |
+| `FileNotFoundError: ...oci_api_key.pem` even though `OciCliConfigPath` is right | The `key_file` entry **inside** `.oci\config` still points at the old location — it isn't updated by moving the directory. |
+| `SSH public key not found at ...` after moving the folder | Update `SshKeyPath` in `config.json` to the new absolute path. |
 | No ntfy push but instance created | Confirm you subscribed to the **same** topic string; check the log for the warning line. |
 
 ## Lessons learned
