@@ -140,6 +140,39 @@ a human was running it against the live remote and reading the output — the bu
   interactively before assuming the system is broken — the console often knows what the log
   doesn't.
 
+### 8. Moving the repo folder left a credential error that would have retried forever
+- **Symptom:** the repo was moved to `C:\Users\lukes\Workshop\oci-instance-provisioner`, with
+  `.oci` and `.ssh` moved inside it. Restarting produced
+  `Get-Acl : Cannot find path 'C:\Users\lukes\.oci\config' because it does not exist` — naming
+  the **old home-directory path** nobody had touched — followed by
+  `FileNotFoundError: [Errno 2] No such file or directory: '...\.oci\oci_api_key.pem'`.
+- **Root cause:** three separate absolute paths have to move together, and they live in **two
+  files with different escaping rules**: `OciCliConfigPath` and `SshKeyPath` in `config.json`
+  (JSON — doubled backslashes), and the `key_file` entry *inside* `.oci\config` (INI — single
+  backslashes). Moving the directory rewrites none of them. With `OciCliConfigPath` unset the
+  CLI silently falls back to `~/.oci/config`, which is why the error names a path the user never
+  configured — nothing in the message points at the setting that actually needs changing.
+- **The latent bug this exposed:** the `key_file`-only case (config found, key missing) produces
+  a bare `FileNotFoundError` / `No such file or directory`. That wording matched **none** of the
+  usage, permanent, or transient signatures, so it fell through to the generic
+  `unclassified - will retry` fallback — the script would have retried a permanent config error
+  forever without ever reaching Oracle. The user's own case only failed fast by luck: the
+  accompanying `Get-Acl` text happened to contain `does not exist`, which *was* in
+  `$permanentSignatures`. Fix the config path but forget `key_file` and that luck runs out.
+- **Fix:** a dedicated `$credentialConfigSignatures` branch, checked before the generic permanent
+  one, covering the Python SDK's own exception names (`ConfigFileNotFound`, `InvalidKeyFilePath`,
+  `InvalidPrivateKey`, `InvalidConfig`) plus the raw OS/PowerShell wording seen live. Its fatal
+  message names all three paths and both escaping rules explicitly. Guarded with
+  `-notmatch $transientSignatures` so a genuine capacity signal can't be shadowed by incidental
+  credential-shaped noise. Scenario 15 in `tests/Run-IntegrationTests.ps1` reproduces the
+  `key_file`-only case, deliberately *excluding* the `does not exist` wording so the test fails
+  without the new branch.
+- **Lesson:** a fail-fast classifier is only as good as its coverage of *wordings*, not
+  categories. "Missing credentials" was conceptually a permanent error the whole time — but the
+  one phrasing that mattered had no signature, so the intended fail-fast path was never reached.
+  When a live incident is caught by a signature that only incidentally matched, treat that as a
+  near-miss and go find the variant where the coincidence doesn't hold.
+
 ---
 
 ## Reading OCI's error language

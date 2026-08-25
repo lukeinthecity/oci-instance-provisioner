@@ -500,6 +500,17 @@ $($Response.Trim())
             # without ever checking real capacity. Check this BEFORE the other signatures so it
             # can never be swallowed by the generic "unclassified - will retry" fallback below.
             $cliUsageSignatures = 'Usage: oci .*\[OPTIONS\]|Got unexpected extra arguments|No such option|Missing option|Invalid value for'
+
+            # The CLI could not load its own credentials: a missing/moved ~/.oci/config, or a
+            # key_file entry inside it pointing at a private key that isn't there. Like a usage
+            # error this never reaches Oracle, so it can never be a capacity signal — but its
+            # wording shares nothing with the permanent-API signatures below, so without its own
+            # branch the FileNotFoundError case matches NOTHING and falls through to the generic
+            # "unclassified - will retry" path: an infinite loop on a config problem. Covers the
+            # Python SDK's own exception names plus the raw OS/PowerShell text seen in the wild
+            # when .oci is relocated (docs/TEST-FLIGHT-NOTES.md).
+            $credentialConfigSignatures = 'ConfigFileNotFound|InvalidKeyFilePath|InvalidPrivateKey|InvalidConfig|PrivateKeyFileNotFound|FileNotFoundError|No such file or directory|Cannot find path|Could not find config file|config file.*is invalid'
+
             $permanentSignatures = 'NotAuthorizedOrNotFound|NotAuthenticated|NotAuthorized|is not authorized|LimitExceeded|QuotaExceeded|service limit|CannotParseRequest|InvalidParameter|MissingParameter|does not exist'
             $transientSignatures = 'Out of host capacity|OutOfCapacity|OutOfHostCapacity|TooManyRequests|throttl|Service.*Unavailable|InternalServerError|timed out|timeout'
 
@@ -514,6 +525,32 @@ every attempt from here on would fail the exact same way without ever reaching O
     'git reset --hard origin/main' (NOT plain 'git pull', which can silently no-op on a
     mistracked branch — see docs/TEST-FLIGHT-NOTES.md) and restart the process/Scheduled Task.
   - If the script IS current, this is a real bug — please open an issue with the raw output below.
+
+Raw CLI output:
+$rawResponse
+"@
+            }
+
+            # The -notmatch guard mirrors the permanent branch below: if a real capacity signal
+            # is present then the CLI demonstrably DID authenticate and reach Oracle, so any
+            # credential-shaped text in the same output is incidental noise — prefer retrying.
+            if ($rawResponse -match $credentialConfigSignatures -and $rawResponse -notmatch $transientSignatures) {
+                Write-Log -Path $LogPath -Level ERROR -Message 'The OCI CLI could not load its own credentials - this is a CONFIG problem, not a capacity one:'
+                Write-Log -Path $LogPath -Level ERROR -Message $rawResponse
+                Exit-Fatal @"
+Provisioning aborted: the OCI CLI could not find or read its configuration or API key.
+The call never reached Oracle, so retrying would repeat this forever without checking capacity.
+Note there are THREE paths involved, in TWO files with different escaping — a relocated .oci
+directory needs all of them updated together:
+  - config.json -> "OciCliConfigPath": absolute path to your .oci\config (JSON: doubled backslashes).
+    If unset, the CLI falls back to ~/.oci/config, so the error names your HOME path even when
+    you moved the folder elsewhere.
+  - .oci\config -> the 'key_file' entry inside it (INI: single backslashes). Moving the
+    directory does NOT rewrite this, so it still points at the old location.
+  - config.json -> "SshKeyPath": absolute path to your .pub key.
+See the "Keeping .oci and .ssh next to the script" section of README.md for the full walkthrough.
+A moved private key can also inherit Windows ACLs the CLI rejects; check with
+'Get-Acl <key> | Format-List'.
 
 Raw CLI output:
 $rawResponse
