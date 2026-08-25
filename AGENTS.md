@@ -125,6 +125,11 @@ pass. Preserve them:
 - Target **Windows PowerShell 5.1** (no PS7-only syntax) so it runs on a stock Windows box.
 - Heavy, enterprise-style comments — this is a portfolio repo; keep it readable.
 - **No secrets in tracked files.** Anything user-specific goes in `config.json`.
+- **Match each file's existing encoding.** CI runs PSScriptAnalyzer's
+  `PSUseBOMForUnicodeEncodedFile`, which fails any non-ASCII file lacking a UTF-8 BOM.
+  `OciProvisioner.ps1` **has** a BOM, so em-dashes and other non-ASCII are fine there;
+  `tests/Run-IntegrationTests.ps1` has **no** BOM and must stay pure ASCII — use `-` or `:`
+  rather than `—` in its comments. Check with `grep -P '[^\x00-\x7F]'` before committing.
 - When you change provisioning behavior, **add/adjust a scenario in
   `tests/Run-IntegrationTests.ps1`** and run it (`.\tests\Run-IntegrationTests.ps1`) before
   committing. Keep tests hermetic (mock `oci`, never hit Oracle or the public network).

@@ -126,7 +126,7 @@ function New-MissingKeyFileOci([string]$Dir) {
     # wording that happens to accompany a MISSING config file): that string was already in
     # $permanentSignatures, so including it here would let the test pass without the dedicated
     # credential branch actually doing anything. This wording alone previously matched no
-    # signature at all and fell through to "unclassified - will retry" — an infinite loop on a
+    # signature at all and fell through to "unclassified - will retry": an infinite loop on a
     # permanent config error.
     @'
 @echo off
