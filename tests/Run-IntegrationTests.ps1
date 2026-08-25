@@ -119,6 +119,22 @@ echo Error: Got unexpected extra arguments (abCD:US-ASHBURN-AD-2 abCD:US-ASHBURN
 exit /b 2
 '@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
 }
+function New-MissingKeyFileOci([string]$Dir) {
+    # Simulates a relocated .oci directory whose config was found but whose 'key_file' entry
+    # still points at the old private-key path. The Python SDK raises FileNotFoundError before
+    # any request leaves the machine. Deliberately does NOT emit "does not exist" (the Get-Acl
+    # wording that happens to accompany a MISSING config file): that string was already in
+    # $permanentSignatures, so including it here would let the test pass without the dedicated
+    # credential branch actually doing anything. This wording alone previously matched no
+    # signature at all and fell through to "unclassified - will retry" — an infinite loop on a
+    # permanent config error.
+    @'
+@echo off
+echo oci-was-called>> "%~dp0oci_called.txt"
+echo FileNotFoundError: [Errno 2] No such file or directory: 'C:\Users\test\.oci\oci_api_key.pem' 1>&2
+exit /b 1
+'@ | Set-Content -Path (Join-Path $Dir 'oci.cmd') -Encoding ASCII
+}
 function New-AdSelectiveOci([string]$Dir) {
     # Capacity ONLY in AD-3: fails "Out of host capacity" for AD-1/AD-2, succeeds for AD-3.
     # Records each invocation's args so the test can confirm all three ADs were swept.
@@ -415,6 +431,26 @@ try {
     Assert ($r.Out -match 'could not be parsed as valid JSON')          "prints the JSON-parse fatal error"
     Assert ((Get-Content (Join-Path $d 'provisioner.log') -Raw) -match 'could not be parsed as valid JSON') `
         "ALSO logs it to file - this is the exact incident: previously invisible under a headless run"
+
+    # --- Scenario 15: CLI can't load its credentials => abort fast, do NOT loop forever ---
+    # Reproduces a real incident: the repo (with .oci and .ssh inside it) was moved to a new
+    # folder, leaving the 'key_file' entry inside .oci\config pointing at the old private-key
+    # path. The CLI fails with a bare FileNotFoundError before contacting Oracle. That wording
+    # matched none of the usage/permanent/transient signatures, so it fell through to the
+    # generic "unclassified - will retry" fallback and the script would retry a permanent
+    # config error forever - exactly the anti-pattern the fail-fast classifier exists to stop.
+    Write-Host "`n[15] Credential/config error (moved .oci, stale key_file) => fails fast"
+    $d = New-TestDir '15-missing-key-file'
+    New-MissingKeyFileOci $d; New-Key $d; New-ValidConfig -Dir $d -BaseDelay 1 -Jitter 0
+    $r = Invoke-Provisioner $d
+    Assert ($r.ExitCode -eq 1)                                   "exits 1 (does not loop forever)"
+    Assert ($r.Out -match 'could not load its own credentials')  "labels it a config problem, not capacity"
+    Assert ($r.Out -match 'FileNotFoundError')                   "surfaces the real CLI error"
+    Assert ($r.Out -match 'key_file')                            "names the specific entry that must be updated"
+    Assert ($r.Out -notmatch 'Backing off')                      "does NOT enter the backoff loop"
+    Assert ($r.Out -notmatch 'unclassified')                     "is NOT swallowed by the generic unclassified fallback"
+    Assert ((Get-Content (Join-Path $d 'provisioner.log') -Raw) -match 'could not load its own credentials') `
+        "logs the fatal to file (headless Scheduled Task has no console)"
 }
 finally {
     Remove-Item $SandboxRoot -Recurse -Force -ErrorAction SilentlyContinue

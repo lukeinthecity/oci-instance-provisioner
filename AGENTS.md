@@ -106,6 +106,19 @@ pass. Preserve them:
     Without that early default, referencing `$LogPath` inside `Exit-Fatal` before it's ever been
     assigned would itself throw under `Set-StrictMode -Version Latest` (a variable that's never
     been set, not just empty). See `docs/TEST-FLIGHT-NOTES.md` for the full incident.
+15. **Credential/config failures are their own fail-fast bucket
+    (`$credentialConfigSignatures`).** When the CLI can't find or read `~/.oci/config` or the
+    `key_file` private key it names, the call never leaves the machine — so it can never be a
+    capacity signal. This needs its own branch because its wording shares nothing with the
+    permanent-API signatures: a `key_file`-only failure emits a bare `FileNotFoundError` /
+    `No such file or directory`, which previously matched **no** signature and fell through to
+    `unclassified — will retry`, looping forever on a permanent config error. Covers the Python
+    SDK's exception names (`ConfigFileNotFound`, `InvalidKeyFilePath`, `InvalidPrivateKey`,
+    `InvalidConfig`) plus the raw OS/PowerShell text. Guarded with `-notmatch
+    $transientSignatures` so a real capacity signal can't be shadowed. See
+    `docs/TEST-FLIGHT-NOTES.md` live-only bug #8, and scenario 15 in
+    `tests/Run-IntegrationTests.ps1`, which deliberately omits the `does not exist` wording that
+    made the original live incident fail fast by coincidence rather than by design.
 
 ## Conventions
 
